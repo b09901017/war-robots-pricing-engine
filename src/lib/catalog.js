@@ -36,19 +36,30 @@ var WR_CATALOG = (function () {
    * common = 是否放在輸入介面的第一排。二十個物品全部攤開會變成一面牆，
    * 但實際上只有金卡以外的東西會天天用到 —— 金卡與泰坦太貴，多數人不會考慮，
    * 所以收進「更多」裡，需要時再展開。
+   *
+   * ref = 行情參考價 [下限, 上限]，單位跟 per 一樣（銀幣是「每 1M 多少元」）。
+   *
+   *   這是使用者自己給的市場行情，**完全不參與推算**：不是 priors、不進正則化、
+   *   不影響任何一種算法解出來的單價。它只在畫面上多開一欄，讓人用自己心裡那把尺
+   *   對照引擎算出來的數字。會刻意跟引擎隔開是因為兩者的性質完全不同 ——
+   *   引擎的答案是你的禮包資料推出來的，行情參考價是你事先相信的，
+   *   把後者混進前者就等於拿自己的猜測去驗證自己的猜測。
+   *
+   *   只有一個值的物品寫成上下限相同，畫面上就會顯示成單一數字而不是區間。
+   *   資料卡沒有行情參考價 —— 它們的價值取決於開出什麼，本來就沒有公定行情。
    */
   var ITEMS = [
-    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, common: true,
+    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, common: true, ref: [0.85, 1],
       inputScale: 1000000, inputUnit: 'M', steps: [25000000, 50000000, 100000000, 150000000, 200000000, 260000000, 500000000] },
-    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, common: true, steps: [1000, 2000, 3000, 5000, 7500, 10000, 20000] },
-    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 100, common: true, steps: [500, 1000, 1500, 2000, 2500, 5000, 10000] },
-    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, common: true, steps: [5000, 7500, 10000, 20000, 25000, 30000, 50000] },
+    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, common: true, ref: [1.6, 2], steps: [1000, 2000, 3000, 5000, 7500, 10000, 20000] },
+    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 100, common: true, ref: [8.4, 10], steps: [500, 1000, 1500, 2000, 2500, 5000, 10000] },
+    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, common: true, ref: [4.8, 4.8], steps: [5000, 7500, 10000, 20000, 25000, 30000, 50000] },
 
-    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, common: true, steps: [100, 1000, 5000, 10000, 15000, 25000, 50000] },
-    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, common: true, steps: [100, 200, 500, 750, 1000, 1500, 2000] },
-    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 10, common: true, steps: [100, 200, 400, 800, 1600, 3200] },
-    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, common: true, steps: [1000, 2500, 5000, 7500, 10000, 12500] },
-    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, common: true, steps: [1, 2, 3, 5, 7, 10] },
+    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, common: true, ref: [7.7, 7.7], steps: [100, 1000, 5000, 10000, 15000, 25000, 50000] },
+    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, common: true, ref: [1.2, 1.2], steps: [100, 200, 500, 750, 1000, 1500, 2000] },
+    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 10, common: true, ref: [2, 2], steps: [100, 200, 400, 800, 1600, 3200] },
+    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, common: true, ref: [1, 1.5], steps: [1000, 2500, 5000, 7500, 10000, 12500] },
+    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, common: true, ref: [99, 99], steps: [1, 2, 3, 5, 7, 10] },
 
     { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, common: true, steps: [3, 5, 15, 25, 45, 55, 105] },
     { id: 'dc_basic_au', name: '基礎金', abbr: '基金', group: 'datacard', per: 1, steps: [1, 2, 3, 6, 10] },
@@ -133,6 +144,61 @@ var WR_CATALOG = (function () {
   /** 直接把原始單價格式化成顯示字串（已換算過計價單位）。 */
   function formatDisplayPrice(id, unitPrice) {
     return formatUnitPrice(toDisplayPrice(id, unitPrice));
+  }
+
+  /* ---------- 行情參考價 -----------------------------------------------
+     使用者自己給的市場行情，單位跟 per 相同。跟上面那組換算函式一樣，
+     對外一律回傳「每 1 單位」的原始值，畫面要顯示時再自己換算回去 ——
+     引擎與畫面之間只有一種單位約定，這裡不開例外。
+
+     再強調一次：這組數字不進求解器。它沒有被寫進 priors，也沒有被寫進
+     任何 solve() 的選項，唯一的用途是在畫面上多給一個對照欄。
+     -------------------------------------------------------------------- */
+
+  /** 行情參考價（計價單位）：{ low, high, mid, single } 或 null。 */
+  function refOf(id) {
+    var it = BY_ID[id];
+    if (!it || !it.ref) return null;
+    var lo = Number(it.ref[0]);
+    var hi = Number(it.ref.length > 1 ? it.ref[1] : it.ref[0]);
+    if (!isFinite(lo) || !isFinite(hi) || lo <= 0 || hi <= 0) return null;
+    if (hi < lo) { var t = lo; lo = hi; hi = t; }
+    return { low: lo, high: hi, mid: (lo + hi) / 2, single: hi === lo };
+  }
+
+  /** 同上，但換算成引擎那邊的「每 1 單位」原始單價。 */
+  function refUnitOf(id) {
+    var r = refOf(id);
+    if (!r) return null;
+    var per = perOf(id);
+    return { low: r.low / per, high: r.high / per, mid: r.mid / per, single: r.single };
+  }
+
+  function hasRef(id) {
+    return refOf(id) !== null;
+  }
+
+  /**
+   * 行情參考價的顯示字串：單一值寫成「4.8」，區間寫成「0.85 – 1」。
+   *
+   * 這裡刻意不用 formatUnitPrice 的輸出原樣 —— 它會把 1 寫成「1.00」、
+   * 把 4.8 寫成「4.80」。解出來的單價那樣寫是對的（位數代表精度），
+   * 但行情參考價是使用者自己寫下的整數字，補零只會讓人以為多了精度。
+   */
+  function formatRef(id) {
+    var r = refOf(id);
+    if (!r) return '';
+    if (r.single) return refNumber(r.low);
+    return refNumber(r.low) + ' – ' + refNumber(r.high);
+  }
+
+  function refNumber(v) {
+    return formatUnitPrice(v).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  }
+
+  /** 有行情參考價的物品 id。 */
+  function refItems() {
+    return IDS.filter(hasRef);
   }
 
   /* ---------- 輸入單位 -------------------------------------------------
@@ -252,6 +318,11 @@ var WR_CATALOG = (function () {
     toDisplayPrice: toDisplayPrice,
     toUnitPrice: toUnitPrice,
     formatDisplayPrice: formatDisplayPrice,
+    refOf: refOf,
+    refUnitOf: refUnitOf,
+    hasRef: hasRef,
+    formatRef: formatRef,
+    refItems: refItems,
     formatQty: formatQty,
     formatUnitPrice: formatUnitPrice,
     formatMoney: formatMoney,

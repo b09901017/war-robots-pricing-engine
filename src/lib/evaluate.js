@@ -94,6 +94,85 @@ var WR_EVAL = (function () {
   }
 
   /**
+   * 用「行情參考價」算一次同一包的價值，當成第五個對照欄。
+   *
+   * 這條路徑跟四種算法完全分開：行情參考價沒有進過求解器，不是 priors，
+   * 也不影響任何一個 model。它回答的是另一個問題 ——
+   *
+   *     四種算法：照你**記過的禮包**推出來，這包值多少？
+   *     行情參考：照你**心裡那份價目表**，這包值多少？
+   *
+   * 兩者差很多時，要嘛是你的禮包資料還沒定住這些物品，要嘛是你的價目表該更新了。
+   * 哪一個才對，程式沒有立場，所以只並排不下結論。
+   *
+   * 沒有行情參考價的物品（資料卡）改用模型解出來的單價填補，否則一包
+   * 以資料卡為主的禮包會被算成幾乎沒有價值，那個數字比不給還糟。
+   * 填補了多少用 coverage 誠實寫出來。
+   *
+   * @returns {Object|null} 完全沒有任何一項有行情參考價時回 null
+   */
+  function reference(candidate, model) {
+    var price = Number(candidate.price);
+    var qty = candidate.qty || {};
+    var prices = (model && model.prices) || {};
+
+    var low = 0, mid = 0, high = 0;
+    var refValue = 0;
+    var covered = [];
+    var filled = [];
+    var missing = [];
+
+    for (var id in qty) {
+      if (!Object.prototype.hasOwnProperty.call(qty, id)) continue;
+      var q = Number(qty[id]);
+      if (!isFinite(q) || q <= 0) continue;
+
+      var r = WR_CATALOG.refUnitOf(id);
+      if (r) {
+        low += q * r.low;
+        mid += q * r.mid;
+        high += q * r.high;
+        refValue += q * r.mid;
+        covered.push({ id: id, label: WR_CATALOG.labelOf(id), qty: q, low: r.low, high: r.high, mid: r.mid });
+        continue;
+      }
+
+      // 沒有行情參考價：拿模型的點估計當那一項的價值，三個界都用同一個數字，
+      // 因為那一項的不確定性不是「行情參考」這個口徑該負責回答的事。
+      var unit = prices[id];
+      if (unit === undefined || !isFinite(unit)) {
+        missing.push({ id: id, label: WR_CATALOG.labelOf(id), qty: q });
+        continue;
+      }
+      low += q * unit;
+      mid += q * unit;
+      high += q * unit;
+      filled.push({ id: id, label: WR_CATALOG.labelOf(id), qty: q, unitPrice: unit, value: q * unit });
+    }
+
+    if (!covered.length) return null;
+
+    var usable = isFinite(price) && price > 0;
+    var band = normalBand(model);
+    return {
+      value: mid,
+      valueLow: low,
+      valueHigh: high,
+      ratio: usable ? mid / price : null,
+      ratioLow: usable ? low / price : null,
+      ratioHigh: usable ? high / price : null,
+      tier: usable ? tierFor(mid / price, band) : null,
+      band: band,
+      /** 價值裡有多少比例真的來自行情參考價，其餘是用模型單價填補的 */
+      coverage: mid > 0 ? refValue / mid : 0,
+      covered: covered,
+      filled: filled,
+      /** 既沒有行情參考價、模型也還沒解出來的那些 */
+      missing: missing
+    };
+  }
+
+  /**
    * 正常行情的半寬：跟著模型的平均絕對百分誤差走，夾在 6% ~ 25% 之間。
    *
    * 但自由度不足時（待解物品數逼近禮包筆數），擬合誤差會趨近 0 —— 那是因為
@@ -189,6 +268,7 @@ var WR_EVAL = (function () {
   return {
     TIERS: TIERS,
     evaluate: evaluate,
+    reference: reference,
     normalBand: normalBand,
     tierFor: tierFor
   };
