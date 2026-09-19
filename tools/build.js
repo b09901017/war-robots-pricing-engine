@@ -85,10 +85,39 @@ function buildGas() {
   return code.length;
 }
 
+/**
+ * 把提示詞也輸出成 Markdown，方便在 GitHub 上直接讀、直接複製。
+ * 原始碼只有 src/lib/prompt.js 一份。
+ */
+function buildPromptDoc() {
+  const src = read('lib', 'prompt.js');
+  const ctx = vm.createContext({});
+  vm.runInContext(src, ctx, { filename: 'prompt.js' });
+  const body = [
+    '# 截圖辨識提示詞',
+    '',
+    '> 這個檔案由 `tools/build.js` 從 `src/lib/prompt.js` 產生，請不要直接編輯。',
+    '> App 的「設定 → 從截圖批次新增 → 複製辨識提示詞」複製的就是同一段文字。',
+    '',
+    '把下面整段連同商城截圖一起丟給任何看得懂圖的 AI：',
+    '',
+    '---',
+    '',
+    ctx.WR_PROMPT.TEXT,
+    ''
+  ].join('\n');
+
+  fs.mkdirSync(path.join(ROOT, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(ROOT, 'docs', '辨識提示詞.md'), body);
+  return body.length;
+}
+
 const webSize = buildWeb();
 const gasSize = buildGas();
+const docSize = buildPromptDoc();
 console.log(`✓ dist-web/index.html  ${(webSize / 1024).toFixed(0)} KB  （網站，GitHub Pages 部署這個）`);
 console.log(`✓ dist-gas/Code.gs     ${(gasSize / 1024).toFixed(0)} KB  （貼進 Apps Script 的那一個檔案）`);
+console.log(`✓ docs/辨識提示詞.md   ${(docSize / 1024).toFixed(1)} KB  （給別的 AI 看截圖用的提示詞）`);
 
 if (process.argv.includes('--serve')) {
   const port = Number(process.env.PORT) || 4173;

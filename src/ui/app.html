@@ -775,7 +775,7 @@
     // 還沒有資料的時候，「資料要存在哪」才是第一件該決定的事；
     // 有資料之後，會常用的是鎖定單價，就把它放回最上面。
     var firstRun = !state.bundles.length;
-    if (firstRun) root.appendChild(dataSection());
+    if (firstRun) append(root, dataSection());
 
     // 鎖定基準單價
     var lockList = h('div', { class: 'card' });
@@ -835,7 +835,7 @@
             onchange: function (e) { s.interval = Number(e.target.value) || 0.8; recompute(); render(); persistSettings(); } }))
       )));
 
-    if (!firstRun) root.appendChild(dataSection());
+    if (!firstRun) append(root, dataSection());
   }
 
   /** 資料存在哪裡，以及跟試算表之間的各種動作。 */
@@ -876,8 +876,157 @@
 
     card.appendChild(h('button', { class: 'btn btn-block btn-ghost', onclick: loadSample }, '載入範例禮包'));
 
-    return h('section', { class: 'section' },
-      h('div', { class: 'section-title', text: '資料存放' }), card);
+    var io = h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:9px' },
+      h('button', { class: 'btn btn-primary btn-block', onclick: function () { openImport(''); } },
+        h('span', { svg: ICON.plus }), '從截圖批次新增'),
+      h('button', { class: 'btn btn-block', onclick: exportJson }, '匯出成 JSON'),
+      h('div', { class: 'section-note',
+        text: '把商城截圖丟給任何看得懂圖的 AI，用下面提供的提示詞讓它產出 JSON，貼回來就能一次新增很多筆。' }));
+
+    return [
+      h('section', { class: 'section' },
+        h('div', { class: 'section-title', text: '資料存放' }), card),
+      h('section', { class: 'section' },
+        h('div', { class: 'section-title', text: '批次匯入 / 匯出' }), io)
+    ];
+  }
+
+  /* ====================================================================
+     JSON 批次匯入
+     ==================================================================== */
+
+  var importReady = null;
+
+  function openImport(initialText) {
+    importReady = null;
+    var body = $('importBody');
+    clear(body);
+
+    body.appendChild(h('div', { class: 'notice' },
+      h('span', { class: 'ico', svg: ICON.alert }),
+      h('span', { text: '流程：截圖商城 → 複製下面的提示詞連同截圖丟給 AI → 把它回你的 JSON 整段貼到下面 → 檢查 → 匯入。' })));
+
+    body.appendChild(h('button', { class: 'btn btn-block', onclick: copyPrompt },
+      h('span', { svg: ICON.check }), '複製辨識提示詞'));
+
+    body.appendChild(h('div', { class: 'field' },
+      h('label', { class: 'field-label', text: 'JSON', for: 'importText' }),
+      h('textarea', {
+        class: 'field-input', id: 'importText', rows: '9', spellcheck: 'false',
+        style: 'font-family:var(--font-num); font-size:12.5px; resize:vertical; min-height:150px',
+        placeholder: '{\n  "bundles": [\n    { "name": "微晶片小包", "price": 130, "items": { "微晶片": 12800 } }\n  ]\n}',
+        oninput: function () { importReady = null; paintImportResult(null); }
+      }, initialText || '')));
+
+    body.appendChild(h('div', { id: 'importResult' }));
+
+    paintImportFoot();
+    openSheet('importSheet');
+  }
+
+  function paintImportFoot() {
+    var foot = $('importFoot');
+    clear(foot);
+    if (importReady) {
+      foot.appendChild(h('button', { class: 'btn', onclick: function () { importReady = null; paintImportFoot(); paintImportResult(null); } }, '重新檢查'));
+      foot.appendChild(h('button', { class: 'btn btn-primary', onclick: runImport },
+        h('span', { svg: ICON.check }), '匯入 ' + importReady.length + ' 筆'));
+    } else {
+      foot.appendChild(h('button', { class: 'btn btn-primary btn-block', onclick: checkImport }, '檢查'));
+    }
+  }
+
+  function checkImport() {
+    var res = WR_IMPORT.parse($('importText').value);
+    paintImportResult(res);
+    importReady = res.ok ? res.bundles : null;
+    paintImportFoot();
+  }
+
+  function paintImportResult(res) {
+    var box = $('importResult');
+    if (!box) return;
+    clear(box);
+    if (!res) return;
+
+    var errors = res.issues.filter(function (i) { return i.level === 'error'; });
+    var warns = res.issues.filter(function (i) { return i.level === 'warn'; });
+
+    if (errors.length) {
+      box.appendChild(h('div', { class: 'notice notice-warn', style: 'margin-bottom:9px' },
+        h('span', { class: 'ico', svg: ICON.alert }),
+        h('span', { text: '有 ' + errors.length + ' 個問題，修好之後再檢查一次。有問題的那幾筆都不會被匯入。' })));
+      errors.slice(0, 12).forEach(function (e) {
+        box.appendChild(h('div', { class: 'section-note', style: 'color:var(--critical-ink); padding:3px 0', text: '• ' + e.text }));
+      });
+      if (res.unknownItems.length) {
+        box.appendChild(h('div', { class: 'section-note', style: 'margin-top:9px',
+          text: '認不得的名稱：' + res.unknownItems.join('、') + '。請改成提示詞清單裡的中文名，或把它移到 unknown 欄位。' }));
+      }
+      return;
+    }
+
+    warns.forEach(function (w) {
+      box.appendChild(h('div', { class: 'notice notice-warn', style: 'margin-bottom:9px' },
+        h('span', { class: 'ico', svg: ICON.alert }), h('span', { text: w.text })));
+    });
+
+    box.appendChild(h('div', { class: 'section-title', style: 'margin:11px 0 7px', text: '預覽 ' + res.bundles.length + ' 筆' }));
+    var list = h('div', { class: 'card' });
+    res.bundles.forEach(function (b) {
+      list.appendChild(h('div', { class: 'slot', style: 'grid-template-columns: minmax(0,1fr) auto' },
+        h('div', { style: 'min-width:0' },
+          h('div', { class: 'slot-name', text: (b.name || '（未命名）') + (b.enabled === false ? '（不納入推算）' : '') }),
+          h('div', { class: 'slot-sub', text: Object.keys(b.qty).map(function (id) {
+            return WR_CATALOG.labelOf(id) + ' ' + fmtQty(b.qty[id]);
+          }).join('、') })),
+        h('div', { class: 'num', style: 'font-size:15px; font-weight:600', text: 'NT$' + group(b.price) })));
+    });
+    box.appendChild(list);
+  }
+
+  function runImport() {
+    if (!importReady || !importReady.length) return;
+    var n = importReady.length;
+    closeSheet('importSheet');
+    busy(true);
+    WRBridge.call('saveBundles', importReady).then(function (res) {
+      state.bundles = res.bundles;
+      importReady = null;
+      recompute();
+      render();
+      toast('已匯入 ' + n + ' 筆');
+    }).catch(failed).then(function () { busy(false); });
+  }
+
+  function exportJson() {
+    if (!state.bundles.length) { toast('目前沒有資料可以匯出'); return; }
+    openImport(WR_IMPORT.serialize(state.bundles));
+    toast('已填入 ' + state.bundles.length + ' 筆，可以全選複製起來備份');
+  }
+
+  function copyPrompt() {
+    copyText(WR_PROMPT.TEXT, '已複製辨識提示詞');
+  }
+
+  /** navigator.clipboard 在非 https 或權限被擋時會失敗，退回舊的 execCommand。 */
+  function copyText(text, okMessage) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed; opacity:0; pointer-events:none';
+      document.body.appendChild(ta);
+      ta.select();
+      var done = false;
+      try { done = document.execCommand('copy'); } catch (e) { done = false; }
+      document.body.removeChild(ta);
+      toast(done ? okMessage : '複製失敗，請手動選取文字');
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast(okMessage); }, fallback);
+    } else {
+      fallback();
+    }
   }
 
   /* ====================================================================
@@ -1187,6 +1336,7 @@
     buildPad();
     $('editorClose').addEventListener('click', function () { closeSheet('editorSheet'); });
     $('connectClose').addEventListener('click', function () { closeSheet('connectSheet'); });
+    $('importClose').addEventListener('click', function () { closeSheet('importSheet'); });
     $('scrim').addEventListener('click', function () {
       if (openSheets.length) closeSheet(openSheets[openSheets.length - 1]);
     });

@@ -79,6 +79,20 @@
   <div class="sheet-foot" id="connectFoot"></div>
 </section>
 
+<!-- JSON 匯入 / 匯出 -->
+<section class="sheet" id="importSheet" role="dialog" aria-modal="true" aria-labelledby="importTitle" aria-hidden="true">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="importTitle">從截圖批次新增</div>
+      <div class="sheet-sub">截圖丟給 AI 辨識，把它產出的 JSON 貼進來</div>
+    </div>
+    <button class="btn btn-sm btn-ghost" id="importClose">關閉</button>
+  </div>
+  <div class="sheet-body" id="importBody"></div>
+  <div class="sheet-foot" id="importFoot"></div>
+</section>
+
 <!-- 數字鍵盤 -->
 <section class="sheet" id="padSheet" role="dialog" aria-modal="true" aria-labelledby="padTitle" aria-hidden="true">
   <div class="sheet-grip"></div>
@@ -105,6 +119,8 @@
 <!--include:lib:solver-->
 <!--include:lib:evaluate-->
 <!--include:lib:sample-->
+<!--include:lib:importer-->
+<!--include:lib:prompt-->
 <!--include:bridge-->
 <!--include:app-->
 
