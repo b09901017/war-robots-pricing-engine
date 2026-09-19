@@ -79,19 +79,38 @@
      狀態
      ==================================================================== */
 
+  var DEFAULT_SETTINGS = {
+    method: 'robust',
+    dropDominatedSingles: true,
+    priorWeight: 1,
+    relativeWeighting: true,
+    samples: 240,
+    interval: 0.8
+  };
+
   var state = {
     ready: false,
     view: 'board',
     bundles: [],
-    settings: { priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8 },
+    settings: clone(DEFAULT_SETTINGS),
     priors: {},
     model: null,
+    /** 四種算法的對照。跑一次要近百毫秒，所以按需計算並快取，資料沒變就不重跑。 */
+    compare: null,
     spreadsheetUrl: '',
     spreadsheetName: '',
     editor: null,
     draft: { name: '', price: null, qty: {} },
+    /** 禮包清單的篩選與排序。只影響畫面，不影響推算。 */
+    filter: { items: [], sort: 'date' },
     busy: false
   };
+
+  function clone(o) {
+    var out = {};
+    for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) out[k] = o[k];
+    return out;
+  }
 
   var VIEWS = [
     { id: 'board', title: '單價看板', icon: ICON.board, label: '看板' },
@@ -104,22 +123,39 @@
      推算：每次資料變動就在瀏覽器裡重算一次，不需要等伺服器
      ==================================================================== */
 
-  function recompute() {
-    // state.priors 存的是使用者看到、也是試算表裡的「計價單位」數字，
-    // 引擎要的是每 1 單位的原始單價，換算只在這一個地方發生。
+  /**
+   * state.priors 存的是使用者看到、也是試算表裡的「計價單位」數字，
+   * 引擎要的是每 1 單位的原始單價。整個 app 只有這裡做這個換算。
+   */
+  function engineOptions() {
     var priors = {};
     for (var id in state.priors) {
       if (Object.prototype.hasOwnProperty.call(state.priors, id)) {
         priors[id] = WR_CATALOG.toUnitPrice(id, state.priors[id]);
       }
     }
-    state.model = WR_SOLVER.solve(state.bundles, {
+    var s = state.settings;
+    return {
       priors: priors,
-      priorWeight: state.settings.priorWeight,
-      relativeWeighting: state.settings.relativeWeighting,
-      samples: state.settings.samples,
-      interval: state.settings.interval
-    });
+      method: s.method,
+      dropDominatedSingles: s.dropDominatedSingles !== false,
+      priorWeight: s.priorWeight,
+      relativeWeighting: s.relativeWeighting,
+      samples: s.samples,
+      interval: s.interval
+    };
+  }
+
+  function recompute() {
+    var opt = engineOptions();
+    state.model = WR_SOLVER.solve(state.bundles, opt);
+    // 資料或設定變了，四種算法的對照就過期了。
+    if (state.compare && state.compare.key !== compareKey()) state.compare = null;
+  }
+
+  /** 對照結果的有效性指紋：禮包、參考值、推算設定，任何一個動了就要重算。 */
+  function compareKey() {
+    return JSON.stringify([state.bundles, state.priors, state.settings]);
   }
 
   var recomputeTimer = null;
@@ -167,7 +203,10 @@
     var sub;
     if (!state.ready) sub = '讀取中…';
     else if (!m || m.bundleCount === 0) sub = '尚無禮包資料';
-    else sub = m.bundleCount + ' 筆禮包 · ' + m.items.length + ' 種物品 · 平均誤差 ' + pct(m.fit.mape, 1);
+    else {
+      sub = m.bundleCount + ' 筆禮包 · ' + m.items.length + ' 種物品 · ' +
+        (m.fit.meaningful === false ? '方程式還不夠多' : '平均誤差 ' + pct(m.fit.mape, 1));
+    }
     $('viewSub').textContent = sub;
 
     var actions = $('topActions');
@@ -216,10 +255,17 @@
         h('span', { class: 'ico', svg: ICON.alert }), h('span', { text: w.text })));
     });
 
+    // 自由度不足時，擬合誤差必然趨近 0 —— 那不是模型準，是它還沒被考驗過。
+    // 與其印一個會被誤讀成好消息的漂亮數字，不如直接說它還不算數。
+    var solid = m.fit.meaningful !== false;
     root.appendChild(h('div', { class: 'stat-row' },
-      stat('禮包樣本', group(m.bundleCount), '筆', m.lockedCount ? m.lockedCount + ' 項單價已鎖定' : '全部由資料解出'),
-      stat('已解物品', group(m.items.length), '種', m.solvedCount + ' 種參與求解'),
-      stat('平均誤差', pct(m.fit.mape, 1), null, '模型回推售價的平均偏離')
+      stat('禮包樣本', group(m.bundleCount), '筆',
+        m.excludedCount ? m.excludedCount + ' 筆被更便宜的同類壓過' : WR_SOLVER.methodInfo(m.method).label),
+      stat('已解物品', group(m.items.length), '種',
+        m.fit.dof === null ? m.solvedCount + ' 種參與求解' : '自由度 ' + m.fit.dof),
+      solid
+        ? stat('平均誤差', pct(m.fit.mape, 1), null, '模型回推售價的平均偏離')
+        : stat('平均誤差', '尚不算數', null, '方程式還不夠多，解必然通過每一點')
     ));
 
     var head = h('div', { class: 'section-head' },
@@ -330,13 +376,17 @@
 
   function fitSection(m) {
     if (!m.fit.predictions.length) return null;
-    var rows = m.fit.predictions.slice(0, 8);
+    var active = m.fit.predictions.filter(function (p) { return !p.excluded; });
+    var rows = active.slice(0, 8);
+    var showWeight = m.method === 'robust';
+
     var table = h('table', { class: 'fit-table' },
       h('thead', null, h('tr', null,
         h('th', { text: '禮包' }),
         h('th', { class: 'n', text: '實際售價' }),
         h('th', { class: 'n', text: '模型估值' }),
-        h('th', { class: 'n', text: '偏離' })
+        h('th', { class: 'n', text: '偏離' }),
+        showWeight ? h('th', { class: 'n', text: '採信' }) : null
       )),
       h('tbody', null, rows.map(function (p) {
         var off = p.ratio - 1;
@@ -345,17 +395,46 @@
           h('td', { text: p.name || '（未命名）' }),
           h('td', { class: 'n', text: group(Math.round(p.actual)) }),
           h('td', { class: 'n', text: fmtMoney(p.predicted) }),
-          h('td', { class: 'n', style: 'color:' + tone, text: (off >= 0 ? '+' : '') + pct(off, 1) })
+          h('td', { class: 'n', style: 'color:' + tone, text: (off >= 0 ? '+' : '') + pct(off, 1) }),
+          showWeight ? h('td', { class: 'n',
+            style: p.weight < 0.75 ? 'color:var(--serious-ink)' : 'color:var(--ink-3)',
+            text: p.weight >= 0.995 ? '全部' : pct(p.weight) }) : null
         );
       }))
     );
-    return h('section', { class: 'section' },
+
+    var blurb = showWeight
+      ? '偏離最大的幾包。「採信」低於 100% 代表這一筆偏離行情太遠，' +
+        '穩健回歸自動降低了它的發言權 —— 可能是辨識打錯了，也可能是真的超級促銷。紀錄本身完整保留。'
+      : '偏離最大的幾包。正值代表模型認為它超值，負值代表它比行情貴。落差特別大的通常是輸入打錯了。';
+
+    var sec = h('section', { class: 'section' },
       h('div', { class: 'section-head' },
         h('div', { class: 'section-title', text: '擬合診斷' }),
-        h('div', { class: 'section-note', text: 'R² ' + (m.fit.r2 === null ? '—' : m.fit.r2.toFixed(3)) })),
-      h('div', { class: 'section-note', text: '偏離最大的幾包。正值代表模型認為它超值，負值代表它比行情貴。落差特別大的通常是輸入打錯了。' }),
-      h('div', { class: 'card' }, h('div', { class: 'table-wrap' }, table))
-    );
+        h('div', { class: 'section-note', text: WR_SOLVER.methodInfo(m.method).label +
+          ' · R² ' + (m.fit.r2 === null ? '—' : m.fit.r2.toFixed(3)) })),
+      h('div', { class: 'section-note', text: blurb }),
+      h('div', { class: 'card' }, h('div', { class: 'table-wrap' }, table)));
+
+    if (m.excluded && m.excluded.length) sec.appendChild(excludedCard(m));
+    return sec;
+  }
+
+  /** 被更便宜的同物品單品壓過、因此沒有參與求解的那些。 */
+  function excludedCard(m) {
+    var list = h('div', { class: 'card', style: 'margin-top:10px' });
+    m.excluded.forEach(function (e) {
+      list.appendChild(h('div', { class: 'lock-row' },
+        h('div', { class: 'lock-info' },
+          h('div', { class: 'lock-name', text: e.name || '（未命名）' }),
+          h('div', { class: 'lock-est', text: '每' + (WR_CATALOG.perLabel(e.itemId) || '1') + ' ' +
+            dPrice(e.itemId, e.unitPrice) + ' 元，比「' + (e.bestName || '另一筆') + '」貴 ' + pct(e.overpay) })),
+        h('span', { class: 'pill conf-low' }, '未納入')));
+    });
+    return h('div', null,
+      h('div', { class: 'section-note', style: 'margin-top:14px',
+        text: '這些單品包有更便宜的同物品選擇，所以不拿來決定基準單價 —— 基準單價代表「你買得到的最好價格」。' }),
+      list);
   }
 
   /* ====================================================================
@@ -382,18 +461,111 @@
       state.model.fit.predictions.forEach(function (p) { byId[p.id] = p; });
     }
 
+    root.appendChild(filterBar());
+
+    var shown = applyFilter(state.bundles);
     var list = h('div', null);
-    state.bundles.slice().sort(function (a, b) {
-      return String(b.date || '').localeCompare(String(a.date || ''));
-    }).forEach(function (b) {
-      list.appendChild(bundleCard(b, byId[b.id]));
-    });
+    shown.forEach(function (b) { list.appendChild(bundleCard(b, byId[b.id])); });
+
+    var f = state.filter;
+    var title = f.items.length
+      ? shown.length + ' / ' + state.bundles.length + ' 筆'
+      : state.bundles.length + ' 筆紀錄';
+
+    var body = shown.length
+      ? list
+      : h('div', { class: 'card card-pad' }, h('div', { class: 'ed-empty', style: 'padding:14px 4px' },
+        '沒有同時包含這些物品的禮包。'));
 
     root.appendChild(h('section', { class: 'section' },
       h('div', { class: 'section-head' },
-        h('div', { class: 'section-title', text: state.bundles.length + ' 筆紀錄' }),
+        h('div', { class: 'section-title', text: title }),
         h('div', { class: 'section-note', text: '點任一筆即可編輯' })),
-      list));
+      body));
+  }
+
+  /**
+   * 篩選：選幾個物品，只留「同時包含」這些物品的禮包。
+   *
+   * 用 AND 而不是 OR，因為這個功能的實際用途是「我想看以前有沒有出過類似的包」——
+   * 選了白金又選了金幣，想找的是兩者都有的那種組合包，不是兩者任一。
+   */
+  function applyFilter(bundles) {
+    var f = state.filter;
+    var out = bundles.filter(function (b) {
+      for (var i = 0; i < f.items.length; i++) {
+        if (!(b.qty && b.qty[f.items[i]] > 0)) return false;
+      }
+      return true;
+    });
+
+    var pred = {};
+    if (state.model) state.model.fit.predictions.forEach(function (p) { pred[p.id] = p; });
+
+    return out.sort(function (a, b) {
+      if (f.sort === 'price') return (b.price || 0) - (a.price || 0);
+      if (f.sort === 'ratio') {
+        var ra = pred[a.id] && pred[a.id].ratio !== null ? pred[a.id].ratio : -1;
+        var rb = pred[b.id] && pred[b.id].ratio !== null ? pred[b.id].ratio : -1;
+        return rb - ra;
+      }
+      return String(b.date || '').localeCompare(String(a.date || ''));
+    });
+  }
+
+  var SORTS = [
+    { id: 'date', label: '最新' },
+    { id: 'price', label: '售價' },
+    { id: 'ratio', label: '性價比' }
+  ];
+
+  function filterBar() {
+    var f = state.filter;
+
+    // 只列出真的出現過的物品 —— 給一排永遠點不出東西的丸子沒有意義。
+    var seen = {};
+    state.bundles.forEach(function (b) {
+      for (var id in (b.qty || {})) {
+        if (Object.prototype.hasOwnProperty.call(b.qty, id) && b.qty[id] > 0) {
+          seen[id] = (seen[id] || 0) + 1;
+        }
+      }
+    });
+    var ids = WR_CATALOG.IDS.filter(function (id) { return seen[id]; });
+
+    var chips = h('div', { class: 'chips' });
+    ids.forEach(function (id) {
+      var on = f.items.indexOf(id) >= 0;
+      chips.appendChild(h('button', {
+        class: 'chip',
+        'aria-pressed': on ? 'true' : 'false',
+        onclick: function () {
+          var at = f.items.indexOf(id);
+          if (at >= 0) f.items.splice(at, 1); else f.items.push(id);
+          render();
+        }
+      }, WR_CATALOG.labelOf(id), h('span', { class: 'chip-qty', text: String(seen[id]) })));
+    });
+
+    var sorts = h('div', { class: 'seg' });
+    SORTS.forEach(function (s) {
+      sorts.appendChild(h('button', {
+        class: state.filter.sort === s.id ? 'on' : '',
+        onclick: function () { state.filter.sort = s.id; render(); }
+      }, s.label));
+    });
+
+    var head = h('div', { class: 'section-head' },
+      h('div', { class: 'section-title', text: '找禮包' }),
+      f.items.length
+        ? h('button', { class: 'btn btn-sm btn-ghost', onclick: function () { f.items = []; render(); } }, '清除篩選')
+        : null);
+
+    return h('section', { class: 'section' }, head,
+      h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:11px' },
+        chips,
+        h('div', { style: 'display:flex; align-items:center; gap:10px; flex-wrap:wrap' },
+          h('span', { class: 'section-note', style: 'margin:0', text: '排序' }), sorts)));
   }
 
   function bundleCard(b, pred) {
@@ -416,13 +588,23 @@
       })));
     }
 
-    if (pred) {
+    if (pred && pred.excluded) {
+      // 被更便宜的同物品單品壓過 —— 紀錄留著，但不拿來決定基準單價。
+      card.appendChild(h('div', { class: 'bundle-foot' },
+        h('span', { class: 'pill conf-low' }, h('span', { class: 'dot' }), '未納入推算'),
+        h('span', { text: '有更便宜的「' + (pred.excludedBy || '同類禮包') + '」' })));
+    } else if (pred) {
       var off = pred.ratio - 1;
       var tone = Math.abs(off) < 0.1 ? 'conf-mid' : (off > 0 ? 'conf-high' : 'conf-low');
-      card.appendChild(h('div', { class: 'bundle-foot' },
+      var foot = h('div', { class: 'bundle-foot' },
         h('span', { class: 'pill ' + tone }, h('span', { class: 'dot' }),
           '性價比 ' + pred.ratio.toFixed(2)),
-        h('span', { text: '模型估值 ' + fmtMoney(pred.predicted) + ' 元' })));
+        h('span', { text: '模型估值 ' + fmtMoney(pred.predicted) + ' 元' }));
+      if (pred.weight !== undefined && pred.weight < 0.75) {
+        foot.appendChild(h('span', { style: 'color:var(--serious-ink)',
+          text: '· 偏離行情，採信 ' + pct(pred.weight) }));
+      }
+      card.appendChild(foot);
     }
 
     return card;
@@ -848,6 +1030,7 @@
 
     var ev = WR_EVAL.evaluate({ qty: d.qty, price: d.price }, m);
     root.appendChild(verdictCard(ev));
+    root.appendChild(methodsCard({ qty: d.qty, price: d.price }));
     root.appendChild(compareCard(ev));
     if (ev.contributions.length) root.appendChild(contributionCard(ev));
     if (ev.unpriced.length) {
@@ -884,6 +1067,93 @@
     }
     card.appendChild(h('div', { class: 'verdict-blurb', text: lines.join(' ') }));
     return card;
+  }
+
+  /* --------------------------------------------------------------
+     四種算法並排
+
+     重點不是挑出「最準的那個」—— 而是看結論穩不穩。四個都說超值，
+     那個判斷就跟算法怎麼選無關；彼此打架，代表結論是假設撐起來的，
+     該去多記幾包而不是照著買。
+
+     跑一次四個模型將近 100 毫秒，所以不在每次打字時重算：按一次算一次，
+     資料沒變就一直沿用。
+     -------------------------------------------------------------- */
+
+  function methodsCard(candidate) {
+    var sec = h('section', { class: 'section' },
+      h('div', { class: 'section-head' },
+        h('div', { class: 'section-title', text: '四種算法怎麼說' }),
+        state.compare
+          ? h('button', { class: 'btn btn-sm btn-ghost', onclick: function () { state.compare = null; render(); } }, '收起')
+          : null));
+
+    if (!state.compare) {
+      sec.appendChild(h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:10px' },
+        h('div', { class: 'section-note', style: 'margin:0', text:
+          '同一批禮包用四種不同的算法各算一次，並排比較。四個都同意的話，這個結論就不是算法選出來的。' }),
+        h('button', { class: 'btn btn-primary btn-block', onclick: runCompare },
+          h('span', { svg: ICON.calc }), '用四種算法比較')));
+      return sec;
+    }
+
+    var list = WR_COMPARE.verdicts(candidate, state.compare.variants);
+    var con = WR_COMPARE.consensus(list);
+
+    var card = h('div', { class: 'card', style: 'overflow:hidden' });
+    list.forEach(function (v) {
+      var ev = v.ev;
+      var tone = ev.tier ? ev.tier.tone : 'neutral';
+      var row = h('div', { class: 'method-row' });
+
+      row.appendChild(h('div', { class: 'method-name' },
+        h('div', { class: 'method-label' }, v.label,
+          v.key === state.settings.method ? h('span', { class: 'pill conf-high', style: 'margin-left:6px' }, '看板用這個') : null),
+        h('div', { class: 'method-blurb', text: v.blurb })));
+
+      row.appendChild(h('div', { class: 'method-figure' },
+        h('div', { class: 'method-ratio num tone-' + tone, text: ev.ratio === null ? '—' : ev.ratio.toFixed(2) }),
+        ev.ratioLow !== null
+          ? h('div', { class: 'method-range', text: ev.ratioLow.toFixed(2) + ' – ' + ev.ratioHigh.toFixed(2) })
+          : h('div', { class: 'method-range', text: '無區間' }),
+        h('div', { class: 'badge badge-sm tone-' + tone, text: ev.tier ? ev.tier.label : '—' })));
+
+      card.appendChild(row);
+    });
+
+    sec.appendChild(card);
+    sec.appendChild(h('div', { class: 'notice' + (con.level === 'weak' ? ' notice-warn' : '') },
+      h('span', { class: 'ico', svg: con.level === 'weak' ? ICON.alert : ICON.check }),
+      h('span', { text: con.text })));
+
+    // 貝氏的區間通常明顯比其他三個寬，那不是它比較差，而是另外三個低估了。
+    var bayes = list.filter(function (v) { return v.key === 'bayes'; })[0];
+    if (bayes && bayes.ev.ratioLow !== null) {
+      var others = list.filter(function (v) { return v.key !== 'bayes' && v.ev.ratioLow !== null; });
+      var widest = 0;
+      others.forEach(function (v) { widest = Math.max(widest, v.ev.ratioHigh - v.ev.ratioLow); });
+      var mine = bayes.ev.ratioHigh - bayes.ev.ratioLow;
+      if (widest > 0 && mine > widest * 1.8) {
+        sec.appendChild(h('div', { class: 'section-note', text:
+          '完整貝氏的區間明顯比其他三個寬。那不是它算得比較差 —— 重抽法在「資料本來就分不出來」的情況下' +
+          '每次都會收斂到同一個答案，於是區間很窄，但那個穩定是假的。這裡寬的那個才是誠實的。' }));
+      }
+    }
+    return sec;
+  }
+
+  function runCompare() {
+    busy(true);
+    // 讓瀏覽器先把「計算中」畫出來，再開始這近百毫秒的同步運算。
+    setTimeout(function () {
+      try {
+        state.compare = { key: compareKey(), variants: WR_COMPARE.build(state.bundles, engineOptions()) };
+      } catch (err) {
+        failed(err);
+      }
+      busy(false);
+      render();
+    }, 16);
   }
 
   function compareCard(ev) {
@@ -1020,12 +1290,44 @@
         '那一項的參考值就會自動退場，之後完全由資料決定。填錯了也會被資料修正。' }),
       lockList));
 
-    // 推算參數
     var s = state.settings;
+
+    // 算法
+    var seg = h('div', { class: 'seg' });
+    WR_SOLVER.METHODS.forEach(function (mm) {
+      seg.appendChild(h('button', {
+        class: s.method === mm.id ? 'on' : '',
+        onclick: function () { s.method = mm.id; state.compare = null; recompute(); render(); persistSettings(); }
+      }, mm.label));
+    });
+    var chosen = WR_SOLVER.methodInfo(s.method);
+
+    root.appendChild(h('section', { class: 'section' },
+      h('div', { class: 'section-title', text: '看板用哪種算法' }),
+      h('div', { class: 'section-note', text:
+        '三種都在算同一件事，差別在「怎麼看待跟其他禮包格格不入的那幾筆」。' +
+        '不確定就留在穩健回歸 —— 試算頁可以隨時把四種算法並排比較。' }),
+      h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:11px' },
+        seg,
+        h('div', { class: 'section-note', style: 'margin:0', text: chosen.blurb }))));
+
+    // 推算參數
     root.appendChild(h('section', { class: 'section' },
       h('div', { class: 'section-title', text: '推算參數' }),
-      h('div', { class: 'section-note', text: '這四個平常不用動，預設值就是合理的。看板上的數字怪怪的時候再回來調。' }),
+      h('div', { class: 'section-note', text: '這幾個平常不用動，預設值就是合理的。看板上的數字怪怪的時候再回來調。' }),
       h('div', { class: 'card' },
+        settingRow('忽略比較貴的同款單品包',
+          '同一個物品如果有好幾個「只含它」的禮包，只有最便宜的那個算數。' +
+          '例如「白金 1000 賣 100 元」和「白金 1500 賣 130 元」同時在架上，前者就不算行情 —— ' +
+          '沒有人會買它。開著的時候，基準單價代表「你買得到的最好價格」；關掉的話代表「平均行情」。' +
+          '注意只有純單品適用，組合包永遠不會被這條規則排除。',
+          h('label', { class: 'switch' },
+            h('input', { type: 'checkbox', checked: s.dropDominatedSingles !== false ? true : null,
+              onchange: function (e) {
+                s.dropDominatedSingles = e.target.checked;
+                state.compare = null; recompute(); render(); persistSettings();
+              } }),
+            h('span'))),
         settingRow('參考單價的份量',
           '你填的參考單價相當於「幾筆禮包」的份量。1 代表某物品出現在 1 包裡時，' +
           '答案大約一半來自你的猜測；出現在 10 包裡時就只剩 9%。調高會讓猜測更有份量，' +
@@ -1071,6 +1373,19 @@
         : '資料存在這台裝置的瀏覽器裡，換一台裝置就看不到。' })));
 
     if (connected) {
+      card.appendChild(h('button', { class: 'btn btn-primary btn-block', onclick: function () {
+        busy(true);
+        reload().then(function () { toast('已從試算表重新讀取'); }).then(function () { busy(false); });
+      } }, h('span', { svg: ICON.sync }), '從試算表重新讀取'));
+      card.appendChild(h('div', { class: 'section-note',
+        text: '在別台裝置上新增或修改之後，按這個就會把最新的資料抓下來。' }));
+
+      // 手機上手打那串 Apps Script 網址幾乎不可能，所以做成一條連結。
+      card.appendChild(h('button', { class: 'btn btn-block', onclick: copyHandoff },
+        h('span', { svg: ICON.check }), '複製「在手機上開啟」的連結'));
+      card.appendChild(h('div', { class: 'section-note',
+        text: '這條連結裡含有你的密碼，開啟之後就會自動連上同一份試算表。只傳給自己（例如自己的 LINE 記事本），不要外流。' }));
+
       card.appendChild(h('button', { class: 'btn btn-block', onclick: syncBoard },
         h('span', { svg: ICON.sync }), '把單價看板寫回試算表'));
       if (state.spreadsheetUrl) {
@@ -1333,6 +1648,18 @@
     }, 700);
   }
 
+  /** 把目前的連線設定包成一條網址，讓手機不用手打那串 Apps Script 網址。 */
+  function copyHandoff() {
+    var link;
+    try {
+      link = WRBridge.handoffLink(window.location.href);
+    } catch (e) {
+      failed(e);
+      return;
+    }
+    copyText(link, '已複製連結。在手機上打開它就會自動連上同一份試算表。');
+  }
+
   function syncBoard() {
     if (!state.model || !state.model.items.length) { toast('還沒有可以寫入的單價'); return; }
     busy(true);
@@ -1478,7 +1805,14 @@
     renderTopbar();
     return WRBridge.call('load').then(function (data) {
       state.bundles = data.bundles || [];
-      state.settings = data.settings || state.settings;
+      // 舊的設定檔不會有 method / dropDominatedSingles，缺的一律補預設值，
+      // 否則升級之後這些欄位會是 undefined，引擎就悄悄退回它自己的預設。
+      state.settings = clone(DEFAULT_SETTINGS);
+      var saved = data.settings || {};
+      for (var k in DEFAULT_SETTINGS) {
+        if (saved[k] !== undefined && saved[k] !== null && saved[k] !== '') state.settings[k] = saved[k];
+      }
+      state.compare = null;
       state.priors = data.priors || {};
       state.spreadsheetUrl = data.spreadsheetUrl || '';
       state.spreadsheetName = data.spreadsheetName || '';
@@ -1498,6 +1832,10 @@
       if (saved) document.documentElement.setAttribute('data-theme', saved);
     } catch (e) { /* 忽略 */ }
 
+    // 從別台裝置帶過來的連線設定，要在第一次讀取資料之前就收下。
+    var adopted = false;
+    try { adopted = WRBridge.adoptFromHash(); } catch (e2) { /* 忽略 */ }
+
     $('editorBack').innerHTML = ICON.back;
     $('editorBack').addEventListener('click', closeEditor);
     $('editorSave').addEventListener('click', saveEditor);
@@ -1508,7 +1846,9 @@
     });
 
     render();
-    reload();
+    reload().then(function () {
+      if (adopted) toast('已連上試算表，資料是同一份。');
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

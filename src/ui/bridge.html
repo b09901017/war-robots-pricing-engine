@@ -42,6 +42,56 @@ var WRBridge = (function () {
     try { localStorage.removeItem(CONN_KEY); } catch (e) { /* 忽略 */ }
   }
 
+  /* ---------- 換裝置：把連線設定放進網址 ------------------------------ */
+
+  /**
+   * 在手機上手打一串 Apps Script 網址幾乎是不可能的任務，所以提供一條
+   * 「帶著連線設定的連結」。設定放在 # 之後 —— 那一段永遠不會被送到伺服器，
+   * 所以不會留在任何伺服器的存取紀錄裡。
+   *
+   * 但它確實含有密碼，所以只能傳給自己。讀完就立刻從網址列抹掉，
+   * 免得留在瀏覽紀錄或之後被分享出去。
+   */
+  function handoffLink(baseHref) {
+    var conn = connection();
+    if (!conn) throw new Error('目前不是連接試算表的狀態，沒有可以轉移的設定。');
+    var payload = encodeBase64(JSON.stringify({ url: conn.url, token: conn.token }));
+    return String(baseHref).split('#')[0] + '#connect=' + payload;
+  }
+
+  /** 開啟時若網址帶著連線設定就收下來。回傳有沒有真的收到。 */
+  function adoptFromHash() {
+    var hash = String(window.location.hash || '');
+    var at = hash.indexOf('connect=');
+    if (at < 0) return false;
+    var raw = hash.slice(at + 8);
+    var ok = false;
+    try {
+      var data = JSON.parse(decodeBase64(raw));
+      if (data && data.url && data.token) {
+        saveConnection(data.url, data.token);
+        ok = true;
+      }
+    } catch (e) {
+      ok = false;
+    }
+    // 不管成不成功都把它從網址列抹掉，密碼不該留在那裡。
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch (e2) {
+      window.location.hash = '';
+    }
+    return ok;
+  }
+
+  // btoa/atob 只吃 Latin-1，網址與密碼理論上可能含非 ASCII，先過一層 UTF-8。
+  function encodeBase64(text) {
+    return btoa(unescape(encodeURIComponent(text)));
+  }
+  function decodeBase64(text) {
+    return decodeURIComponent(escape(atob(text)));
+  }
+
   /** 測試一組網址與密碼能不能用。成功才存起來。 */
   function connect(url, token) {
     url = String(url || '').trim();
@@ -105,7 +155,14 @@ var WRBridge = (function () {
         var raw = localStorage.getItem(DATA_KEY);
         if (raw) return JSON.parse(raw);
       } catch (e) { /* 忽略 */ }
-      return { bundles: [], settings: { priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8 }, priors: {} };
+      return {
+        bundles: [],
+        settings: {
+          method: 'robust', dropDominatedSingles: true,
+          priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8
+        },
+        priors: {}
+      };
     },
 
     write: function (store) {
@@ -190,6 +247,8 @@ var WRBridge = (function () {
     connection: connection,
     connect: connect,
     disconnect: disconnect,
+    handoffLink: handoffLink,
+    adoptFromHash: adoptFromHash,
     localBundles: localBundles
   };
 })();

@@ -381,17 +381,7 @@ function ensureSchema() {
   ensureHeaders(sheet(SHEETS.board), BOARD_HEADERS);
   ensureHeaders(sheet(SHEETS.evaluations), EVAL_HEADERS);
 
-  var st = sheet(SHEETS.settings);
-  if (st.getLastRow() === 0) {
-    st.getRange(1, 1, 1, 3).setValues([['設定項', '值', '說明']]);
-    st.getRange(2, 1, 4, 3).setValues([
-      ['priorWeight', 1, '參考單價的份量，單位是「相當於幾筆禮包」。0 代表完全不理會參考單價。'],
-      ['relativeWeighting', true, '是否讓每包的相對誤差等權。關掉的話高價禮包會主導結果。'],
-      ['bootstrapSamples', 240, '重抽次數。越多區間越穩，但計算越慢。'],
-      ['interval', 0.8, '區間信賴水準，例如 0.8 代表 80% 區間。']
-    ]);
-    st.setFrozenRows(1);
-  }
+  ensureSettingRows(sheet(SHEETS.settings));
 
   var b = sheet(SHEETS.bundles);
   b.setFrozenRows(1);
@@ -562,32 +552,92 @@ function deleteBundle(id) {
   if (row > 0) sh.deleteRow(row);
 }
 
+/**
+ * 設定表的欄位定義。
+ *
+ * sheetKey 是寫在試算表第一欄的字串，field 是程式裡用的名字 —— 兩者不同名
+ * 的那幾個是歷史包袱（bootstrapSamples / samples），改名會弄壞既有的試算表。
+ * kind 決定讀回來怎麼轉型。
+ */
+var SETTING_ROWS = [
+  ['method', 'method', 'text', 'robust', '看板用哪種算法：ls（最小平方）、robust（穩健回歸）、bayes（完整貝氏）。'],
+  ['dropDominatedSingles', 'dropDominatedSingles', 'bool', true, '同一物品有多個純單品包時，只採用最便宜的那個。開著代表基準單價是「買得到的最好價格」。'],
+  ['priorWeight', 'priorWeight', 'number', 1, '參考單價的份量，單位是「相當於幾筆禮包」。0 代表完全不理會參考單價。'],
+  ['relativeWeighting', 'relativeWeighting', 'bool', true, '是否讓每包的相對誤差等權。關掉的話高價禮包會主導結果。'],
+  ['bootstrapSamples', 'samples', 'number', 240, '重抽次數。越多區間越穩，但計算越慢。'],
+  ['interval', 'interval', 'number', 0.8, '區間信賴水準，例如 0.8 代表 80% 區間。']
+];
+
+/**
+ * 補齊設定表缺少的列。
+ *
+ * 不能只在「表是空的」時候建 —— 既有使用者的試算表早就建好了，新增的設定項
+ * 若只在建表時寫入，他們永遠不會拿到那幾列，saveSettings 也就永遠寫不進去。
+ */
+function ensureSettingRows(sh) {
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, 3).setValues([['設定項', '值', '說明']]);
+    sh.setFrozenRows(1);
+  }
+  var have = {};
+  var lastRow = sh.getLastRow();
+  if (lastRow >= 2) {
+    var keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var r = 0; r < keys.length; r++) have[String(keys[r][0]).trim()] = true;
+  }
+  var missing = [];
+  for (var i = 0; i < SETTING_ROWS.length; i++) {
+    var row = SETTING_ROWS[i];
+    if (!have[row[0]]) missing.push([row[0], row[3], row[4]]);
+  }
+  if (missing.length) {
+    sh.getRange(sh.getLastRow() + 1, 1, missing.length, 3).setValues(missing);
+  }
+}
+
+function settingIndex() {
+  var m = {};
+  for (var i = 0; i < SETTING_ROWS.length; i++) {
+    m[SETTING_ROWS[i][0]] = { field: SETTING_ROWS[i][1], kind: SETTING_ROWS[i][2] };
+  }
+  return m;
+}
+
 function readSettings() {
   var sh = sheet(SHEETS.settings);
-  var out = { priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8 };
+  var out = {};
+  for (var i = 0; i < SETTING_ROWS.length; i++) out[SETTING_ROWS[i][1]] = SETTING_ROWS[i][3];
+
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return out;
   var rows = sh.getRange(2, 1, lastRow - 1, 2).getValues();
-  var map = { priorWeight: 'priorWeight', relativeWeighting: 'relativeWeighting', bootstrapSamples: 'samples', interval: 'interval' };
+  var idx = settingIndex();
   for (var r = 0; r < rows.length; r++) {
-    var key = map[String(rows[r][0]).trim()];
-    if (!key) continue;
+    var spec = idx[String(rows[r][0]).trim()];
+    if (!spec) continue;
     var raw = rows[r][1];
-    if (key === 'relativeWeighting') out[key] = !(raw === false || raw === 'FALSE' || raw === '否' || raw === 0);
-    else if (isFinite(Number(raw))) out[key] = Number(raw);
+    if (spec.kind === 'bool') {
+      out[spec.field] = !(raw === false || raw === 'FALSE' || raw === '否' || raw === 0);
+    } else if (spec.kind === 'text') {
+      var t = String(raw).trim();
+      if (t) out[spec.field] = t;
+    } else if (isFinite(Number(raw))) {
+      out[spec.field] = Number(raw);
+    }
   }
   return out;
 }
 
 function saveSettings(settings) {
   var sh = sheet(SHEETS.settings);
+  ensureSettingRows(sh);
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return;
   var keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
-  var map = { priorWeight: 'priorWeight', relativeWeighting: 'relativeWeighting', bootstrapSamples: 'samples', interval: 'interval' };
+  var idx = settingIndex();
   for (var r = 0; r < keys.length; r++) {
-    var key = map[String(keys[r][0]).trim()];
-    if (key && settings[key] !== undefined) sh.getRange(r + 2, 2).setValue(settings[key]);
+    var spec = idx[String(keys[r][0]).trim()];
+    if (spec && settings[spec.field] !== undefined) sh.getRange(r + 2, 2).setValue(settings[spec.field]);
   }
 }
 

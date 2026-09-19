@@ -167,7 +167,13 @@ var WR_EVAL = (function () {
   /** 這個性價比在歷史禮包裡排第幾？讓「超值」有個具體的比較基準。 */
   function rankAmong(ratio, model) {
     if (ratio === null || !model || !model.fit || !model.fit.predictions) return null;
-    var preds = model.fit.predictions;
+    // 沒有納入求解的那些（被更便宜的同類壓過）沒有性價比可言，不能算進母數，
+    // 否則會出現「12 筆禮包」卻說「在你記錄的 19 筆裡」這種對不起來的句子。
+    var preds = [];
+    for (var k = 0; k < model.fit.predictions.length; k++) {
+      var p = model.fit.predictions[k];
+      if (!p.excluded && p.ratio !== null && isFinite(p.ratio)) preds.push(p);
+    }
     if (preds.length < 3) return null;
     var better = 0;
     for (var i = 0; i < preds.length; i++) {
