@@ -115,6 +115,25 @@ var WRBridge = (function () {
   }
 
   /**
+   * 一次刪掉多筆。
+   *
+   * 新版的 Code.gs 有 deleteBundles 可以一次做完，但使用者手上那份可能是舊的，
+   * 而重貼 Code.gs 是件麻煩事。所以先試新指令，伺服器說不認識就退回去一筆一筆刪。
+   * 慢一點，但不必為了這個功能叫人重貼一次程式。
+   */
+  function deleteMany(ids) {
+    if (!ids || !ids.length) return Promise.resolve({ bundles: null });
+    return call('deleteBundles', ids).catch(function (err) {
+      if (!/不認識的指令/.test(String(err && err.message))) throw err;
+      var chain = Promise.resolve({ bundles: null });
+      ids.forEach(function (id) {
+        chain = chain.then(function () { return call('deleteBundle', id); });
+      });
+      return chain;
+    });
+  }
+
+  /**
    * Content-Type 刻意用 text/plain。
    * 送 application/json 會讓瀏覽器先發一個 CORS 預檢請求（OPTIONS），
    * 而 Apps Script 不處理 OPTIONS，整個請求就會失敗。text/plain 屬於
@@ -214,6 +233,13 @@ var WRBridge = (function () {
           LocalStore.write(s);
           return { bundles: s.bundles };
 
+        case 'deleteBundles':
+          var gone = {};
+          for (var d = 0; d < payload.length; d++) gone[payload[d]] = true;
+          s.bundles = s.bundles.filter(function (x) { return !gone[x.id]; });
+          LocalStore.write(s);
+          return { bundles: s.bundles };
+
         case 'savePriors':
           s.priors = payload || {};
           LocalStore.write(s);
@@ -247,6 +273,7 @@ var WRBridge = (function () {
     connection: connection,
     connect: connect,
     disconnect: disconnect,
+    deleteMany: deleteMany,
     handoffLink: handoffLink,
     adoptFromHash: adoptFromHash,
     localBundles: localBundles

@@ -291,3 +291,65 @@ test('組合包不參與健檢 —— 它的每單位價格沒有被直接觀測
   ], { bootstrap: false });
   assert.strictEqual(model.suspects.length, 0);
 });
+
+/* ---------- 完全重複的禮包 ---------- */
+
+test('售價與內容物都一樣的兩筆合併成一次觀測', () => {
+  const twice = [
+    { id: 'a', name: '卡 45', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'b', name: '卡 45（另一個分頁）', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'c', name: '電池', price: 99, qty: { cell: 12800 } },
+    { id: 'd', name: '模塊', price: 130, qty: { module: 1000 } }
+  ];
+  const model = WR_SOLVER.solve(twice, { bootstrap: false });
+  assert.strictEqual(model.mergedCount, 1);
+  assert.strictEqual(model.bundleCount, 3);
+  // 重複不該讓「出現在幾包」虛胖
+  const card = model.items.filter((x) => x.id === 'dc_basic_ag')[0];
+  assert.strictEqual(card.occurrences, 1);
+  assert.ok(model.warnings.some((w) => w.code === 'merged'));
+});
+
+test('內容相同但售價不同的不算重複 —— 那是兩個真的不同的報價', () => {
+  const model = WR_SOLVER.solve([
+    { id: 'a', name: '卡 45', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'b', name: '卡 45 漲價', price: 260, qty: { dc_basic_ag: 45 } },
+    { id: 'c', name: '電池', price: 99, qty: { cell: 12800 } }
+  ], { bootstrap: false });
+  assert.strictEqual(model.mergedCount, 0);
+});
+
+test('合併可以關掉', () => {
+  const twice = [
+    { id: 'a', name: '卡', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'b', name: '卡', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'c', name: '電池', price: 99, qty: { cell: 12800 } }
+  ];
+  const off = WR_SOLVER.solve(twice, { bootstrap: false, mergeDuplicates: false });
+  assert.strictEqual(off.mergedCount, 0);
+  assert.strictEqual(off.bundleCount, 3);
+});
+
+test('介面拿得到重複分組，而且跟引擎合併的是同一批', () => {
+  const bundles = [
+    { id: 'a', name: '第一筆', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'b', name: '第二筆', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'c', name: '第三筆', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'd', name: '別的', price: 99, qty: { cell: 12800 } }
+  ];
+  const groups = WR_SOLVER.duplicateGroups(bundles);
+  assert.strictEqual(groups.length, 1);
+  assert.strictEqual(groups[0].keep.id, 'a', '保留最早的那一筆');
+  assert.deepStrictEqual([...groups[0].drop.map((b) => b.id)], ['b', 'c']);
+
+  const dropped = groups.reduce((s, g) => s + g.drop.length, 0);
+  assert.strictEqual(WR_SOLVER.solve(bundles, { bootstrap: false }).mergedCount, dropped);
+});
+
+test('停用的禮包不列入重複分組', () => {
+  const groups = WR_SOLVER.duplicateGroups([
+    { id: 'a', name: '第一筆', price: 200, qty: { dc_basic_ag: 45 } },
+    { id: 'b', name: '停用的', price: 200, qty: { dc_basic_ag: 45 }, enabled: false }
+  ]);
+  assert.strictEqual(groups.length, 0);
+});

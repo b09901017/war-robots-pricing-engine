@@ -103,12 +103,20 @@
     draft: { name: '', price: null, qty: {} },
     /** 禮包清單的篩選與排序。只影響畫面，不影響推算。 */
     filter: { items: [], sort: 'date' },
+    /** 看板上那排「資料說明」是否展開。 */
+    showNotes: false,
     busy: false
   };
 
   function clone(o) {
     var out = {};
     for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) out[k] = o[k];
+    return out;
+  }
+
+  function merge(base, extra) {
+    var out = clone(base);
+    for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) out[k] = extra[k];
     return out;
   }
 
@@ -149,6 +157,18 @@
   function recompute() {
     var opt = engineOptions();
     state.model = WR_SOLVER.solve(state.bundles, opt);
+
+    /*
+     * 另一種口徑的解，只為了在看板上並排顯示。
+     *
+     * 「最好價格」和「平均行情」是兩個都合理、但意義完全不同的基準，
+     * 要判斷一包划不划算得知道自己在看哪一種。跑第二次不做 bootstrap ——
+     * 對照欄只需要點估計，區間用不到，省掉九成的時間。
+     */
+    state.altModel = WR_SOLVER.solve(state.bundles, merge(opt, {
+      dropDominatedSingles: !opt.dropDominatedSingles,
+      bootstrap: false
+    }));
     // 資料或設定變了，四種算法的對照就過期了。
     if (state.compare && state.compare.key !== compareKey()) state.compare = null;
   }
@@ -250,10 +270,34 @@
       return;
     }
 
-    (m.warnings || []).forEach(function (w) {
-      root.appendChild(h('div', { class: 'notice' + (w.level === 'warn' ? ' notice-warn' : '') },
+    /*
+     * 需要你動手的（warn）永遠攤開；只是說明現況的（info）收成一行。
+     * 功能一多，光是說明就能堆到四五張卡片，把真正要看的單價整個擠下去 ——
+     * 那些說明每一句都有用，但不該每次打開 app 都重讀一遍。
+     */
+    var notices = m.warnings || [];
+    var urgent = notices.filter(function (w) { return w.level === 'warn'; });
+    var notes = notices.filter(function (w) { return w.level !== 'warn'; });
+
+    urgent.forEach(function (w) {
+      root.appendChild(h('div', { class: 'notice notice-warn' },
         h('span', { class: 'ico', svg: ICON.alert }), h('span', { text: w.text })));
     });
+
+    if (notes.length) {
+      root.appendChild(h('button', {
+        class: 'notice notice-toggle', 'aria-expanded': state.showNotes ? 'true' : 'false',
+        onclick: function () { state.showNotes = !state.showNotes; render(); }
+      },
+        h('span', { class: 'ico', svg: ICON.alert }),
+        h('span', { text: state.showNotes ? '收起這 ' + notes.length + ' 則資料說明' : notes.length + ' 則資料說明（引擎為你的資料做了哪些處理）' })));
+      if (state.showNotes) {
+        notes.forEach(function (w) {
+          root.appendChild(h('div', { class: 'notice' },
+            h('span', { class: 'ico', svg: ICON.check }), h('span', { text: w.text })));
+        });
+      }
+    }
 
     // 自由度不足時，擬合誤差必然趨近 0 —— 那不是模型準，是它還沒被考驗過。
     // 與其印一個會被誤讀成好消息的漂亮數字，不如直接說它還不算數。
@@ -267,6 +311,8 @@
         ? stat('平均誤差', pct(m.fit.mape, 1), null, '模型回推售價的平均偏離')
         : stat('平均誤差', '尚不算數', null, '方程式還不夠多，解必然通過每一點')
     ));
+
+    root.appendChild(basisCard());
 
     var head = h('div', { class: 'section-head' },
       h('div', { class: 'section-title', text: '基準單價' }),
@@ -290,6 +336,55 @@
     root.appendChild(fitSection(m));
   }
 
+  var BASIS = [
+    { id: 'best', drop: true, label: '最好價格',
+      blurb: '同一個物品有好幾種賣法時，只採用最便宜的那個。這是「你實際買得到的最低價」，' +
+        '所以一包東西只要不是最佳買法，就會顯示得比較差。' },
+    { id: 'market', drop: false, label: '平均行情',
+      blurb: '所有報價都算數，包括比較貴的小包。這是「商城平均而言怎麼賣」，' +
+        '比較寬鬆，但也比較貼近你隨手看到一包時的參考基準。' }
+  ];
+
+  /**
+   * 基準口徑切換。
+   *
+   * 「最好價格」和「平均行情」都是合理的基準，但意義差很多 —— 同一包東西在
+   * 前者可能是「正常行情」，在後者卻是「超值」。所以不藏在設定裡，直接放在
+   * 看板最上面，而且每一列都把另一種口徑的數字並排寫出來。
+   */
+  function basisCard() {
+    var current = state.settings.dropDominatedSingles !== false ? 'best' : 'market';
+    var info = BASIS.filter(function (b) { return b.id === current; })[0];
+
+    var seg = h('div', { class: 'seg' });
+    BASIS.forEach(function (b) {
+      seg.appendChild(h('button', {
+        class: b.id === current ? 'on' : '',
+        onclick: function () {
+          if (b.id === current) return;
+          state.settings.dropDominatedSingles = b.drop;
+          state.compare = null;
+          recompute(); render(); persistSettings();
+        }
+      }, b.label));
+    });
+
+    var alt = state.altModel;
+    var lines = [info.blurb];
+    if (alt) {
+      lines.push(current === 'best'
+        ? '目前排除了 ' + state.model.excludedCount + ' 筆有更便宜替代品的單品包。'
+        : '目前把 ' + alt.excludedCount + ' 筆比較貴的同類單品包也算進來了。');
+    }
+
+    return h('section', { class: 'section' },
+      h('div', { class: 'section-head' },
+        h('div', { class: 'section-title', text: '基準要怎麼算' })),
+      h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:11px' },
+        seg,
+        h('div', { class: 'section-note', style: 'margin:0', text: lines.join(' ') })));
+  }
+
   function stat(label, value, unit, foot) {
     return h('div', { class: 'stat' },
       h('div', { class: 'stat-label', text: label }),
@@ -310,8 +405,18 @@
         : null
     ));
 
+    // 另一種基準口徑的數字並排寫出來 —— 差很多的話，代表這個物品的判斷
+    // 會因為你選哪一種基準而完全不同，那件事必須看得見。
+    var altPrice = state.altModel ? state.altModel.prices[it.id] : undefined;
+    var altGap = (altPrice !== undefined && it.price > 0)
+      ? Math.abs(altPrice - it.price) / it.price : 0;
+    var otherLabel = state.settings.dropDominatedSingles !== false ? '平均行情' : '最好價格';
+
     row.appendChild(h('div', { class: 'price-row-value num' },
-      dPrice(it.id, it.price), h('span', { class: 'unit', text: dUnit(it.id) })));
+      dPrice(it.id, it.price), h('span', { class: 'unit', text: dUnit(it.id) }),
+      altGap > 0.03
+        ? h('span', { class: 'price-alt', text: otherLabel + ' ' + dPrice(it.id, altPrice) })
+        : null));
 
     var hasBand = it.price > 0 && it.low !== null && it.high !== null && it.occurrences >= 2;
 
@@ -1426,6 +1531,17 @@
         text: '連上之後資料會改存在試算表，手機和電腦就會同步，也能直接在試算表上編輯。設定方式見專案的 README。' }));
     }
 
+    // 完全重複的紀錄：引擎本來就會自動合併，但清掉之後清單才不會一直看到兩份。
+    var dups = WR_SOLVER.duplicateGroups(state.bundles);
+    var extra = dups.reduce(function (s, g) { return s + g.drop.length; }, 0);
+    if (extra) {
+      card.appendChild(h('button', { class: 'btn btn-block', onclick: function () { mergeDuplicates(dups, extra); } },
+        h('span', { svg: ICON.trash }), '合併 ' + dups.length + ' 組重複（刪掉多餘的 ' + extra + ' 筆）'));
+      card.appendChild(h('div', { class: 'section-note',
+        text: '有 ' + extra + ' 筆跟另一筆完全相同（售價與內容物都一樣）。推算時本來就已經自動合併，' +
+          '按這個只是把多餘的紀錄也刪掉，清單比較乾淨。每組會保留最早的那一筆。' }));
+    }
+
     card.appendChild(h('button', { class: 'btn btn-block btn-ghost', onclick: loadSample }, '載入範例禮包'));
 
     var io = h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:9px' },
@@ -1675,6 +1791,27 @@
       return;
     }
     copyText(link, '已複製連結。在手機上打開它就會自動連上同一份試算表。');
+  }
+
+  /** 把完全重複的紀錄清掉，每組留最早的那一筆。 */
+  function mergeDuplicates(groups, extra) {
+    var ids = [];
+    groups.forEach(function (g) { g.drop.forEach(function (b) { ids.push(b.id); }); });
+    if (!ids.length) return;
+    if (!window.confirm('要刪掉 ' + extra + ' 筆重複的紀錄嗎？每組會保留最早的那一筆，這個動作沒辦法復原。')) return;
+
+    busy(true);
+    WRBridge.deleteMany(ids).then(function (res) {
+      if (res && res.bundles) {
+        state.bundles = res.bundles;
+        state.compare = null;
+        recompute();
+        render();
+        toast('已刪掉 ' + ids.length + ' 筆重複');
+        return null;
+      }
+      return reload().then(function () { toast('已刪掉 ' + ids.length + ' 筆重複'); });
+    }).catch(failed).then(function () { busy(false); });
   }
 
   function syncBoard() {

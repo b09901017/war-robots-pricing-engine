@@ -86,6 +86,11 @@ var WR_SOLVER = (function () {
      * 不是真的比較差的選項，兩筆都該留著當觀測。
      */
     dominateMargin: 0.02,
+    /**
+     * 售價與內容物都一模一樣的兩筆，合併成一次觀測。
+     * 重複的紀錄是同一條方程式，放兩次等於無中生有多了一份證據。
+     */
+    mergeDuplicates: true,
     /** 每單位價格超過同物品中位數的幾倍就視為可疑（很可能是打錯）。 */
     outlierRatio: 1.5,
 
@@ -141,6 +146,10 @@ var WR_SOLVER = (function () {
       if (totalOf(qty) <= 0) continue;
       all.push({ id: bd.id, name: bd.name, price: price, qty: qty });
     }
+
+    // 完全相同的兩筆是同一條方程式，合併成一次觀測。
+    var dedup = opt.mergeDuplicates ? mergeDuplicates(all) : { rows: all, merged: [] };
+    all = dedup.rows;
 
     // 被更便宜的同物品單品壓過的那些，先拿掉再求解。
     var dom = opt.dropDominatedSingles ? dominatedSingles(all, opt.dominateMargin) : { rows: all, excluded: [] };
@@ -235,6 +244,15 @@ var WR_SOLVER = (function () {
       });
     }
 
+    if (dedup.merged.length) {
+      warnings.push({
+        level: 'info',
+        code: 'merged',
+        text: '有 ' + dedup.merged.length + ' 筆禮包跟另一筆完全相同（售價與內容物都一樣），' +
+          '已合併成一次觀測 —— 同一條方程式放兩次會讓它的份量變兩倍。'
+      });
+    }
+
     if (excluded.length) {
       warnings.push({
         level: 'info',
@@ -297,6 +315,8 @@ var WR_SOLVER = (function () {
       bundleCount: rows.length,
       excludedCount: excluded.length,
       excluded: excluded,
+      mergedCount: dedup.merged.length,
+      merged: dedup.merged,
       suspects: suspects,
       downweighted: downweighted,
       solvedCount: solveIds.length,
@@ -362,6 +382,84 @@ var WR_SOLVER = (function () {
       });
     }
     return { rows: kept, excluded: excluded };
+  }
+
+  /* ==================================================================
+     完全重複的禮包
+     ================================================================== */
+
+  /**
+   * 售價與內容物都一模一樣的兩筆，合併成一次觀測。
+   *
+   * 這不是潔癖，是正確性問題：兩筆一模一樣的紀錄在數學上是**同一條方程式**，
+   * 重複放進去只會讓它的權重變成兩倍，等於無中生有多了一份證據。連帶
+   * 「出現在幾包」與「有效觀測次數」也會虛胖，看板上的信心度因此高估。
+   *
+   * 同一個禮包在商城的不同分頁各出現一次，是很常見的記錄方式，
+   * 但那是同一個報價被看到兩次，不是兩次獨立的觀測。
+   *
+   * 日期不納入比對：售價完全相同的話，它就不是「再量一次」而是同一個報價。
+   */
+  function mergeDuplicates(rows) {
+    var seen = {};
+    var kept = [];
+    var merged = [];
+    for (var i = 0; i < rows.length; i++) {
+      var key = duplicateKey(rows[i]);
+      var at = seen[key];
+      if (at === undefined) {
+        seen[key] = kept.length;
+        kept.push(rows[i]);
+        continue;
+      }
+      var first = kept[at];
+      merged.push({
+        id: rows[i].id,
+        name: rows[i].name,
+        keptId: first.id,
+        keptName: first.name,
+        price: rows[i].price
+      });
+    }
+    return { rows: kept, merged: merged };
+  }
+
+  function duplicateKey(row) {
+    var ids = [];
+    for (var id in row.qty) {
+      if (Object.prototype.hasOwnProperty.call(row.qty, id) && row.qty[id] > 0) ids.push(id);
+    }
+    ids.sort();
+    var parts = [];
+    for (var i = 0; i < ids.length; i++) parts.push(ids[i] + ':' + row.qty[ids[i]]);
+    return row.price + '|' + parts.join(',');
+  }
+
+  /**
+   * 給介面用：把原始禮包清單裡完全重複的分組回傳，好讓使用者一次清掉多餘的。
+   * 跟引擎內部用的是同一套判準，所以畫面上看到的跟實際被合併的一定一致。
+   */
+  function duplicateGroups(bundles) {
+    var groups = {};
+    var order = [];
+    for (var i = 0; i < bundles.length; i++) {
+      var bd = bundles[i];
+      if (bd.enabled === false) continue;
+      var price = Number(bd.price);
+      if (!isFinite(price) || price <= 0) continue;
+      var qty = normalizeQty(bd.qty);
+      if (totalOf(qty) <= 0) continue;
+      var key = duplicateKey({ price: price, qty: qty });
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(bd);
+    }
+    var out = [];
+    for (i = 0; i < order.length; i++) {
+      var list = groups[order[i]];
+      if (list.length < 2) continue;
+      out.push({ keep: list[0], drop: list.slice(1) });
+    }
+    return out;
   }
 
   /**
@@ -1287,6 +1385,8 @@ var WR_SOLVER = (function () {
     leverages: leverages,
     rowDiagnostics: rowDiagnostics,
     dominatedSingles: dominatedSingles,
+    mergeDuplicates: mergeDuplicates,
+    duplicateGroups: duplicateGroups,
     unitPriceOutliers: unitPriceOutliers,
     fitQuality: fitQuality,
     predictPrice: predictPrice,

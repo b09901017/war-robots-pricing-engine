@@ -320,6 +320,7 @@ function handle(body) {
     case 'saveBundle':     saveBundle(p); return ok({ bundles: readBundles() });
     case 'saveBundles':    saveBundles(p); return ok({ bundles: readBundles() });
     case 'deleteBundle':   deleteBundle(p); return ok({ bundles: readBundles() });
+    case 'deleteBundles':  deleteBundles(p); return ok({ bundles: readBundles() });
     case 'savePriors':     savePriors(p); return ok({});
     case 'saveSettings':   saveSettings(p); return ok({});
     case 'syncBoard':      return ok({ written: writeBoard(p) });
@@ -554,6 +555,23 @@ function deleteBundle(id) {
   var sh = sheet(SHEETS.bundles);
   var row = findRow(sh, headerIndex(sh), id);
   if (row > 0) sh.deleteRow(row);
+}
+
+/**
+ * 一次刪除多筆。由下往上刪 —— 由上往下的話，刪掉第 5 列之後原本的第 6 列
+ * 會變成第 5 列，後面每一個列號都對不上了。
+ */
+function deleteBundles(ids) {
+  if (!ids || !ids.length) return;
+  var sh = sheet(SHEETS.bundles);
+  var idx = headerIndex(sh);
+  var rows = [];
+  for (var i = 0; i < ids.length; i++) {
+    var r = findRow(sh, idx, ids[i]);
+    if (r > 0) rows.push(r);
+  }
+  rows.sort(function (a, b) { return b - a; });
+  for (i = 0; i < rows.length; i++) sh.deleteRow(rows[i]);
 }
 
 /**
