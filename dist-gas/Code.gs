@@ -43,32 +43,36 @@ var WR_CATALOG = (function () {
    */
   var ITEMS = [
     { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, common: true,
-      inputScale: 1000000, inputUnit: 'M', steps: [250000, 500000, 1000000, 2500000, 5000000, 10000000, 20000000] },
-    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, common: true, steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
-    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 1000, common: true, steps: [10000, 25000, 50000, 100000, 250000] },
-    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, common: true, steps: [5000, 10000, 25000, 50000, 100000] },
+      inputScale: 1000000, inputUnit: 'M', steps: [25000000, 50000000, 100000000, 150000000, 200000000, 260000000, 500000000] },
+    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, common: true, steps: [1000, 2000, 3000, 5000, 7500, 10000, 20000] },
+    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 100, common: true, steps: [500, 1000, 1500, 2000, 2500, 5000, 10000] },
+    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, common: true, steps: [5000, 7500, 10000, 20000, 25000, 30000, 50000] },
 
-    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, common: true, steps: [50, 100, 250, 500, 1000] },
-    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, common: true, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 1000, common: true, steps: [1000, 3200, 6400, 12800, 25600] },
-    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, common: true, steps: [500, 1000, 2500, 5000, 10000] },
-    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, common: true, steps: [100, 250, 500, 1000, 2500] },
+    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, common: true, steps: [100, 1000, 5000, 10000, 15000, 25000, 50000] },
+    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, common: true, steps: [100, 200, 500, 750, 1000, 1500, 2000] },
+    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 10, common: true, steps: [100, 200, 400, 800, 1600, 3200] },
+    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, common: true, steps: [1000, 2500, 5000, 7500, 10000, 12500] },
+    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, common: true, steps: [1, 2, 3, 5, 7, 10] },
 
-    { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, common: true, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_basic_au', name: '基礎金', abbr: '基金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_weapon_ag', name: '武器銀', abbr: '武銀', group: 'datacard', per: 1, common: true, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_weapon_au', name: '武器金', abbr: '武金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_bot_ag', name: '機器人銀', abbr: '機銀', group: 'datacard', per: 1, common: true, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_bot_au', name: '機器人金', abbr: '機金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_titan', name: '泰坦', abbr: '泰', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_newbot_ag', name: '新款機器人銀', abbr: '新銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
-    { id: 'dc_newbot_au', name: '新款機器人金', abbr: '新金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
+    { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, common: true, steps: [3, 5, 15, 25, 45, 55, 105] },
+    { id: 'dc_basic_au', name: '基礎金', abbr: '基金', group: 'datacard', per: 1, steps: [1, 2, 3, 6, 10] },
+    { id: 'dc_weapon_ag', name: '武器銀', abbr: '武銀', group: 'datacard', per: 1, common: true, steps: [5, 10, 15, 28, 50, 75, 125] },
+    { id: 'dc_weapon_au', name: '武器金', abbr: '武金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
+    { id: 'dc_bot_ag', name: '機器人銀', abbr: '機銀', group: 'datacard', per: 1, common: true, steps: [2, 5, 6, 10, 19, 25, 38] },
+    { id: 'dc_bot_au', name: '機器人金', abbr: '機金', group: 'datacard', per: 1, steps: [1, 2, 3, 4, 8] },
+    { id: 'dc_titan', name: '泰坦', abbr: '泰', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
+    { id: 'dc_newbot_ag', name: '新款機器人銀', abbr: '新銀', group: 'datacard', per: 1, steps: [1, 2, 5, 10, 15] },
+    { id: 'dc_newbot_au', name: '新款機器人金', abbr: '新金', group: 'datacard', per: 1, steps: [1, 2, 3, 4, 8] },
     { id: 'dc_ultimate', name: '終極', abbr: '終', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
 
     { id: 'misc', name: '其他物品', abbr: '其', group: 'other', per: 1, steps: [1, 2, 3, 5, 10] }
   ];
 
-  var PRICE_STEPS = [30, 90, 170, 330, 490, 790, 990, 1590, 1990, 2990, 3290];
+  /**
+   * 售價快捷鍵。這串是從實際記錄的 96 筆禮包統計出來最常出現的價格，
+   * 不是憑印象猜的 —— 商城的定價其實高度集中在這十幾個數字上。
+   */
+  var PRICE_STEPS = [66, 99, 130, 160, 170, 200, 230, 260, 270, 330, 500, 730, 1000, 1500];
 
   var BY_ID = {};
   for (var i = 0; i < ITEMS.length; i++) BY_ID[ITEMS[i].id] = ITEMS[i];

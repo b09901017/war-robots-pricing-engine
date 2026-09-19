@@ -17,7 +17,11 @@ test('計價單位讓可大量計量的物品落在 1～10 元', () => {
     ['key', 0.00484, 4.84],      // 每 1K
     ['cell', 0.0077, 7.7],       // 每 1K
     ['module', 0.135, 1.35],     // 每 10
-    ['pilotchip', 0.0118, 1.18]  // 每 100
+    ['pilotchip', 0.0118, 1.18], // 每 100
+    // 下面兩個是用 96 筆實際資料解出來的單價校準的。原本都設成「每 1K」，
+    // 換算後會變成白金 95 元、微晶片 210 元 —— 完全違背「讓金額落在 1～10」的初衷。
+    ['pt', 0.0953, 9.53],        // 每 100
+    ['chip', 0.2104, 2.104]      // 每 10
   ];
   for (const [id, unitPrice, expected] of cases) {
     const got = WR_CATALOG.toDisplayPrice(id, unitPrice);
@@ -44,6 +48,35 @@ test('換算來回不會失真', () => {
     const unit = 0.00731;
     const back = WR_CATALOG.toUnitPrice(id, WR_CATALOG.toDisplayPrice(id, unit));
     assert.ok(Math.abs(back - unit) < 1e-15, `${id} 來回換算跑掉了：${back}`);
+  }
+});
+
+/**
+ * 數字鍵盤上方的快捷值必須真的涵蓋商城會出現的數量。
+ * 原本這些值是憑印象猜的，對上真實資料才發現差了幾十到幾百倍：
+ * 銀幣快捷最大只到 20M，但實際禮包動輒 100M～500M；升級代幣快捷從 100 起跳，
+ * 實際卻只會出現 1～7 個。快捷值沒對到，等於每次都要自己打全部數字。
+ */
+test('快捷值涵蓋實際會出現的數量範圍', () => {
+  const seen = {
+    ag: [100000000, 500000000], au: [2000, 20000], pt: [600, 10300],
+    key: [5500, 50000], cell: [100, 54000], module: [100, 1700],
+    chip: [200, 800], pilotchip: [2200, 12000], uptoken: [1, 7],
+    dc_basic_ag: [3, 107], dc_weapon_ag: [5, 125], dc_bot_ag: [2, 38]
+  };
+  for (const [id, [lo, hi]] of Object.entries(seen)) {
+    const steps = WR_CATALOG.get(id).steps;
+    const min = Math.min(...steps);
+    const max = Math.max(...steps);
+    assert.ok(min <= lo * 2, `${id}: 最小快捷值 ${min} 遠高於實際最小量 ${lo}`);
+    assert.ok(max >= hi * 0.5, `${id}: 最大快捷值 ${max} 遠低於實際最大量 ${hi}`);
+  }
+});
+
+test('售價快捷值涵蓋最常見的定價', () => {
+  // 實際 96 筆裡出現最多次的幾個價格
+  for (const p of [66, 99, 130, 170, 200, 230, 260]) {
+    assert.ok(WR_CATALOG.PRICE_STEPS.indexOf(p) >= 0, `售價快捷值缺少常見的 ${p}`);
   }
 });
 

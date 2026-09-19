@@ -601,8 +601,14 @@
           '性價比 ' + pred.ratio.toFixed(2)),
         h('span', { text: '模型估值 ' + fmtMoney(pred.predicted) + ' 元' }));
       if (pred.weight !== undefined && pred.weight < 0.75) {
-        foot.appendChild(h('span', { style: 'color:var(--serious-ink)',
-          text: '· 偏離行情，採信 ' + pct(pred.weight) }));
+        // 降權有兩個方向，講法完全不同：
+        // 比行情好太多 = 這是好貨，只是不拿它當「一般行情」的樣本
+        // 比行情差太多 = 這筆要嘛很坑，要嘛是輸入打錯了
+        var better = pred.ratio > 1;
+        foot.appendChild(h('span', { style: 'color:var(--' + (better ? 'good' : 'serious') + '-ink)',
+          text: better
+            ? '· 划算得超出行情，未納入平均'
+            : '· 比行情貴得多，未納入平均' }));
       }
       card.appendChild(foot);
     }

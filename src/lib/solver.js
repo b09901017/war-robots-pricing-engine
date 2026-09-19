@@ -253,16 +253,29 @@ var WR_SOLVER = (function () {
     }
 
     var downweighted = [];
+    var bargains = 0;
     if (main.rowWeights) {
       for (i = 0; i < rows.length; i++) {
-        if (main.rowWeights[i] < 0.75) downweighted.push({ id: rows[i].id, name: rows[i].name, weight: main.rowWeights[i] });
+        if (main.rowWeights[i] >= 0.75) continue;
+        var predicted = predictPrice(rows[i].qty, prices);
+        var better = predicted > rows[i].price;
+        if (better) bargains++;
+        downweighted.push({
+          id: rows[i].id, name: rows[i].name, weight: main.rowWeights[i], better: better
+        });
       }
     }
     if (downweighted.length) {
+      // 降權有兩個方向，對使用者的意義完全不同：比行情好太多的是好貨，
+      // 比行情差太多的才需要回頭檢查是不是打錯了。混在一起講會讓人誤以為資料有問題。
+      var parts = [];
+      if (bargains) parts.push(bargains + ' 筆划算得超出行情');
+      if (downweighted.length - bargains) parts.push((downweighted.length - bargains) + ' 筆比行情貴得多');
       warnings.push({
         level: 'info',
         code: 'downweighted',
-        text: '有 ' + downweighted.length + ' 筆禮包偏離行情太遠，已自動降低它們的發言權（紀錄仍然完整保留）。'
+        text: '有 ' + downweighted.length + ' 筆禮包偏離行情太遠（' + parts.join('、') +
+          '），沒有拿去決定一般行情（紀錄仍然完整保留）。'
       });
     }
 
@@ -493,8 +506,23 @@ var WR_SOLVER = (function () {
     }
 
     var x = fit(rows, itemIds, target, opt, priors, w);
+
+    /*
+     * 典型誤差只估這一次，之後整個 IRLS 過程固定不動。
+     *
+     * 這一行是整段穩健回歸裡最關鍵的一行。每輪重估尺度的話會塌掉：
+     * 降權 → 殘差變小 → 尺度變小 → 門檻變嚴 → 更多列被降權 → 再循環。
+     * 用真實的 96 筆資料實測，尺度會從 11% 一路掉到 1%，門檻從 51% 收到 5%，
+     * 最後宣稱 62 筆裡有 17 筆是離群值 —— 包括只偏離 2% 的那些。
+     *
+     * 這是 redescending M-estimator 的已知性質，標準解法（MM 估計）就是
+     * 尺度先定好、IRLS 過程中不再更新。MAD 本身對離群值免疫，所以拿
+     * 初始擬合來估它是安全的。
+     */
+    var scale = madScale(residualsOf(rows, itemIds, target, x), opt);
+
     for (var it = 0; it < iters; it++) {
-      var next = bisquareWeights(residualsOf(rows, itemIds, target, x), opt, sole);
+      var next = bisquareWeights(residualsOf(rows, itemIds, target, x), scale, opt, sole);
       if (w && maxDiff(w, next) < 1e-3) { w = next; break; }
       w = next;
       x = fit(rows, itemIds, target, opt, priors, w);
@@ -548,7 +576,7 @@ var WR_SOLVER = (function () {
     }
     if (judged.length < 4) return null;
 
-    var w = bisquareWeights(resid, opt, sole);
+    var w = bisquareWeights(resid, madScale(resid, opt), opt, sole);
     // 偏離還沒大到「明顯是打錯」的程度，就不在這一階段動它 —— 交給後面的 IRLS。
     for (i = 0; i < m; i++) {
       if (resid[i] !== null && Math.abs(resid[i]) < opt.screenMinResidual) w[i] = 1;
@@ -573,19 +601,25 @@ var WR_SOLVER = (function () {
     return p;
   }
 
+  /** 典型誤差：中位數絕對離差。用中位數而不是標準差，離群值才不會把尺度自己撐大。 */
+  function madScale(resid, opt) {
+    var abs = [];
+    for (var i = 0; i < resid.length; i++) {
+      if (resid[i] !== null) abs.push(Math.abs(resid[i]));
+    }
+    if (!abs.length) return opt.minScale;
+    // 1.4826 是讓 MAD 在常態下等於標準差的換算常數。
+    return Math.max(opt.minScale, 1.4826 * WR_LINALG.median(abs));
+  }
+
   /**
    * Tukey bisquare：w = (1 - (u/c)²)²，|u| > c 時為 0。
    * resid 裡的 null 代表「這筆評斷不了」，一律給滿權重。
    */
-  function bisquareWeights(resid, opt, sole) {
+  function bisquareWeights(resid, scale, opt, sole) {
     var m = resid.length;
-    var abs = [];
-    for (var i = 0; i < m; i++) if (resid[i] !== null) abs.push(Math.abs(resid[i]));
-    // 1.4826 是讓 MAD 在常態下等於標準差的換算常數。
-    var scale = Math.max(opt.minScale, 1.4826 * WR_LINALG.median(abs));
-
     var w = new Array(m);
-    for (i = 0; i < m; i++) {
+    for (var i = 0; i < m; i++) {
       if (resid[i] === null) { w[i] = 1; continue; }
       var u = Math.abs(resid[i]) / scale / opt.tukeyC;
       var v = u >= 1 ? 0 : (1 - u * u) * (1 - u * u);
