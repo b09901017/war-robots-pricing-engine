@@ -51,20 +51,6 @@
 
 <div class="scrim" id="scrim"></div>
 
-<!-- 禮包編輯器 -->
-<section class="sheet" id="editorSheet" role="dialog" aria-modal="true" aria-labelledby="editorTitle" aria-hidden="true">
-  <div class="sheet-grip"></div>
-  <div class="sheet-head">
-    <div>
-      <div class="sheet-title" id="editorTitle">新增禮包</div>
-      <div class="sheet-sub" id="editorSub">點物品丸子加入，數量用鍵盤輸入</div>
-    </div>
-    <button class="btn btn-sm btn-ghost" id="editorClose">關閉</button>
-  </div>
-  <div class="sheet-body" id="editorBody"></div>
-  <div class="sheet-foot" id="editorFoot"></div>
-</section>
-
 <!-- 連接試算表 -->
 <section class="sheet" id="connectSheet" role="dialog" aria-modal="true" aria-labelledby="connectTitle" aria-hidden="true">
   <div class="sheet-grip"></div>
@@ -93,23 +79,15 @@
   <div class="sheet-foot" id="importFoot"></div>
 </section>
 
-<!-- 數字鍵盤 -->
-<section class="sheet" id="padSheet" role="dialog" aria-modal="true" aria-labelledby="padTitle" aria-hidden="true">
-  <div class="sheet-grip"></div>
-  <div class="sheet-head">
-    <div>
-      <div class="sheet-title" id="padTitle">數量</div>
-      <div class="sheet-sub" id="padSub"></div>
-    </div>
-    <button class="btn btn-sm btn-ghost" id="padClose">取消</button>
-  </div>
-  <div class="keypad-display" id="padDisplay"></div>
-  <div class="keypad-quick" id="padQuick"></div>
-  <div class="keypad-grid" id="padGrid"></div>
-  <div class="sheet-foot">
-    <button class="btn" id="padClear">清除</button>
-    <button class="btn btn-primary" id="padDone">完成</button>
-  </div>
+<!-- 禮包編輯器：整頁，不是彈窗。內容在上、數字鍵盤常駐在下。 -->
+<section class="editor" id="editor" role="dialog" aria-modal="true" aria-labelledby="editorTitle" hidden>
+  <header class="editor-bar">
+    <button class="editor-back" id="editorBack" aria-label="返回"></button>
+    <h2 id="editorTitle">新增禮包</h2>
+    <button class="btn btn-sm btn-primary" id="editorSave">儲存</button>
+  </header>
+  <div class="editor-body" id="editorBody"></div>
+  <div class="pad" id="editorPad"></div>
 </section>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>

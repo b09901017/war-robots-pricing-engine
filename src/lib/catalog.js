@@ -28,24 +28,28 @@ var WR_CATALOG = (function () {
    *
    * per 純粹是顯示用的，推算引擎一律用「每 1 單位」的原始值。
    * 商城行情大幅變動時這些值可能需要重新校準。
+   *
+   * common = 是否放在輸入介面的第一排。二十個物品全部攤開會變成一面牆，
+   * 但實際上只有金卡以外的東西會天天用到 —— 金卡與泰坦太貴，多數人不會考慮，
+   * 所以收進「更多」裡，需要時再展開。
    */
   var ITEMS = [
-    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, steps: [100000, 250000, 500000, 1000000, 2500000] },
-    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
-    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 1000, steps: [10000, 25000, 50000, 100000, 250000] },
-    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, steps: [5000, 10000, 25000, 50000, 100000] },
+    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, common: true, steps: [100000, 250000, 500000, 1000000, 2500000] },
+    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, common: true, steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
+    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 1000, common: true, steps: [10000, 25000, 50000, 100000, 250000] },
+    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, common: true, steps: [5000, 10000, 25000, 50000, 100000] },
 
-    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, steps: [50, 100, 250, 500, 1000] },
-    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 1000, steps: [1000, 3200, 6400, 12800, 25600] },
-    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, steps: [500, 1000, 2500, 5000, 10000] },
-    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, steps: [100, 250, 500, 1000, 2500] },
+    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, common: true, steps: [50, 100, 250, 500, 1000] },
+    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, common: true, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 1000, common: true, steps: [1000, 3200, 6400, 12800, 25600] },
+    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, common: true, steps: [500, 1000, 2500, 5000, 10000] },
+    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, common: true, steps: [100, 250, 500, 1000, 2500] },
 
-    { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, common: true, steps: [1, 2, 3, 5, 10, 20] },
     { id: 'dc_basic_au', name: '基礎金', abbr: '基金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_weapon_ag', name: '武器銀', abbr: '武銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_weapon_ag', name: '武器銀', abbr: '武銀', group: 'datacard', per: 1, common: true, steps: [1, 2, 3, 5, 10, 20] },
     { id: 'dc_weapon_au', name: '武器金', abbr: '武金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_bot_ag', name: '機器人銀', abbr: '機銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_bot_ag', name: '機器人銀', abbr: '機銀', group: 'datacard', per: 1, common: true, steps: [1, 2, 3, 5, 10, 20] },
     { id: 'dc_bot_au', name: '機器人金', abbr: '機金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
     { id: 'dc_titan', name: '泰坦', abbr: '泰', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
     { id: 'dc_newbot_ag', name: '新款機器人銀', abbr: '新銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
@@ -122,6 +126,15 @@ var WR_CATALOG = (function () {
     return formatUnitPrice(toDisplayPrice(id, unitPrice));
   }
 
+  /** 常用物品：輸入介面預設只顯示這些，其餘收在「更多」裡。 */
+  function commonItems() {
+    return ITEMS.filter(function (it) { return it.common; });
+  }
+
+  function restItems() {
+    return ITEMS.filter(function (it) { return !it.common; });
+  }
+
   function groups() {
     return GROUPS.map(function (g) {
       return {
@@ -188,6 +201,8 @@ var WR_CATALOG = (function () {
     nameOf: nameOf,
     labelOf: labelOf,
     groups: groups,
+    commonItems: commonItems,
+    restItems: restItems,
     perOf: perOf,
     perLabel: perLabel,
     priceUnitLabel: priceUnitLabel,

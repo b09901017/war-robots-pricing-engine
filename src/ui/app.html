@@ -53,6 +53,7 @@
     sync: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 8.5A6.5 6.5 0 0 0 5 5.6V3.5M3.5 11.5A6.5 6.5 0 0 0 15 14.4v2.1"/><path d="M3.3 5.6H5V3.5M16.7 14.4H15v2.1"/></svg>',
     lock: '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4.5" y="8.5" width="11" height="8" rx="2"/><path d="M7 8.5V6.5a3 3 0 0 1 6 0v2"/></svg>',
     backspace: '<svg viewBox="0 0 24 20" width="20" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H8L2.5 10z"/><path d="M11.5 7.5l5 5M16.5 7.5l-5 5"/></svg>',
+    back: '<svg viewBox="0 0 20 20" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 5 6.5 10l5 5"/></svg>',
     theme: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M16.5 11.4A6.8 6.8 0 0 1 8.6 3.5a6.8 6.8 0 1 0 7.9 7.9z"/></svg>'
   };
 
@@ -267,13 +268,11 @@
 
     var hasBand = it.price > 0 && it.low !== null && it.high !== null && it.occurrences >= 2;
 
+    // 每列只留兩件事：資料多不多、區間多寬。
+    // 原本還塞了總數量與占比色條，四項擠在一起反而什麼都讀不進去。
     row.appendChild(h('div', { class: 'price-row-meta' },
-      h('span', { text: '出現 ' + it.occurrences + ' 包' }),
-      h('span', { text: '共 ' + fmtQty(it.totalQty) }),
-      hasBand ? h('span', { text: '區間 ' + dPrice(it.id, it.low) + ' – ' + dPrice(it.id, it.high) }) : null,
-      h('span', { text: '占總價值 ' + pct(it.share, 1) }),
-      h('span', { class: 'share-bar', 'aria-hidden': 'true' },
-        h('i', { style: 'width:' + Math.max(2, Math.round(it.share * 100)) + '%' }))
+      h('span', { text: '出現在 ' + it.occurrences + ' 包' }),
+      hasBand ? h('span', { text: dPrice(it.id, it.low) + ' – ' + dPrice(it.id, it.high) }) : null
     ));
 
     if (it.price === 0) {
@@ -415,198 +414,319 @@
   }
 
   /* ====================================================================
-     組合包編輯器（禮包新增／編輯，以及試算器共用）
+     禮包編輯器
+
+     舊版用兩層彈窗：點「新增」開面板，點售價又開一層鍵盤面板，選完關掉，
+     捲下去找物品，點一下又開一層，關掉之後剛加的東西已經被捲出畫面。
+     改成整頁 + 常駐鍵盤：你正在建的東西一直看得見，鍵盤永遠在同一個位置，
+     打的字進到哪一格由「焦點」決定，從頭到尾不會有東西彈出來又消失。
      ==================================================================== */
 
-  /**
-   * 物品用丸子點選，數量與售價用數字鍵盤 —— 整個流程盡量不用打字。
-   * @param {Object} draft {name, price, qty}
-   * @param {Function} onChange 任何欄位變動後呼叫
-   */
-  function composer(draft, onChange, opts) {
-    opts = opts || {};
-    var wrap = h('div', { style: 'display:flex; flex-direction:column; gap:17px' });
+  var pad = {
+    draft: null,
+    target: null,     // 'price' 或物品 id
+    buffer: '',
+    mode: 'bundle',   // 'bundle' = 存成禮包；'draft' = 試算用的組合
+    showAll: false,
+    refs: {}
+  };
 
-    // 售價
-    var priceValue = h('span', { class: 'val', text: draft.price ? group(draft.price) : '0' });
-    wrap.appendChild(h('div', { class: 'field' },
-      h('label', { class: 'field-label', text: '售價' }),
-      h('button', {
-        class: 'field-big',
-        onclick: function () {
-          openPad({
-            title: '售價', sub: '新台幣', unit: 'NT$',
-            value: draft.price, steps: WR_CATALOG.PRICE_STEPS,
-            onDone: function (v) {
-              draft.price = v;
-              priceValue.textContent = v ? group(v) : '0';
-              onChange();
-            }
-          });
-        }
-      },
-        h('span', { class: 'cur', text: 'NT$' }),
-        priceValue,
-        h('span', { class: 'hint', text: '點一下用鍵盤輸入' }))
-    ));
+  function openEditor(bundle, mode) {
+    pad.mode = mode || 'bundle';
+    pad.showAll = false;
+    pad.draft = pad.mode === 'draft'
+      ? { name: state.draft.name, price: state.draft.price, qty: cloneQty(state.draft.qty), enabled: true }
+      : (bundle
+        ? { id: bundle.id, name: bundle.name, price: bundle.price, qty: cloneQty(bundle.qty), note: bundle.note, enabled: bundle.enabled !== false }
+        : { id: null, name: '', price: null, qty: {}, note: '', enabled: true });
 
-    // 名稱（唯一需要打字的欄位，且可留空）
-    if (!opts.hideName) {
-      wrap.appendChild(h('div', { class: 'field' },
-        h('label', { class: 'field-label', text: '名稱（可留空）', for: 'composerName' }),
-        h('input', {
-          class: 'field-input', id: 'composerName', type: 'text',
-          placeholder: '例如：週末特惠包', value: draft.name || '',
-          oninput: function (e) { draft.name = e.target.value; }
-        })));
-    }
+    $('editorTitle').textContent = pad.mode === 'draft' ? '要評估的組合'
+      : (bundle ? '編輯禮包' : '新增禮包');
+    $('editorSave').textContent = pad.mode === 'draft' ? '完成' : '儲存';
 
-    // 已選物品
-    var slots = h('div', { class: 'card' });
-    wrap.appendChild(h('div', { class: 'field' },
-      h('div', { class: 'field-label', text: '內容物' }),
-      slots));
+    // 一開啟就把焦點放在售價，使用者可以直接開始打，不必先點一下。
+    pad.target = 'price';
+    pad.buffer = pad.draft.price ? String(pad.draft.price) : '';
 
-    // 物品丸子
-    var picker = h('div', null);
-    wrap.appendChild(h('div', { class: 'field' },
-      h('div', { class: 'field-label', text: '加入物品' }),
-      picker));
-
-    function paintSlots() {
-      clear(slots);
-      var ids = WR_CATALOG.IDS.filter(function (id) { return draft.qty[id] > 0; });
-      if (!ids.length) {
-        slots.appendChild(h('div', { class: 'empty', style: 'padding:26px 18px' },
-          h('span', { text: '還沒加入任何物品' }),
-          h('span', { style: 'font-size:12.5px', text: '從下面點物品丸子加進來' })));
-        return;
-      }
-      ids.forEach(function (id) {
-        var item = WR_CATALOG.get(id);
-        var est = state.model && state.model.prices[id];
-        slots.appendChild(h('div', { class: 'slot' },
-          h('div', { style: 'min-width:0' },
-            h('div', { class: 'slot-name', text: WR_CATALOG.labelOf(id) }),
-            est ? h('div', { class: 'slot-sub', text: '基準 ' + dUnit(id).replace('元 / ', '每 ') + ' ' +
-              dPrice(id, est) + ' 元 · 小計 ' + fmtMoney(draft.qty[id] * est) + ' 元' }) : null),
-          h('button', {
-            class: 'slot-qty num', 'aria-label': WR_CATALOG.labelOf(id) + ' 數量',
-            onclick: function () {
-              openPad({
-                title: WR_CATALOG.labelOf(id), sub: '數量',
-                value: draft.qty[id], steps: item.steps,
-                onDone: function (v) {
-                  if (v > 0) draft.qty[id] = v; else delete draft.qty[id];
-                  paintSlots(); paintPicker(); onChange();
-                }
-              });
-            },
-            text: group(draft.qty[id])
-          }),
-          h('button', {
-            class: 'slot-remove', 'aria-label': '移除 ' + WR_CATALOG.labelOf(id), svg: ICON.close,
-            onclick: function () { delete draft.qty[id]; paintSlots(); paintPicker(); onChange(); }
-          })
-        ));
-      });
-    }
-
-    function paintPicker() {
-      clear(picker);
-      WR_CATALOG.groups().forEach(function (g) {
-        var chips = h('div', { class: 'chips' });
-        g.items.forEach(function (item) {
-          var active = draft.qty[item.id] > 0;
-          chips.appendChild(h('button', {
-            class: 'chip', 'aria-pressed': active ? 'true' : 'false',
-            onclick: function () {
-              openPad({
-                title: WR_CATALOG.labelOf(item.id), sub: '數量',
-                value: draft.qty[item.id], steps: item.steps,
-                onDone: function (v) {
-                  if (v > 0) draft.qty[item.id] = v; else delete draft.qty[item.id];
-                  paintSlots(); paintPicker(); onChange();
-                }
-              });
-            }
-          }, item.name, active ? h('span', { class: 'chip-qty', text: fmtQty(draft.qty[item.id]) }) : null));
-        });
-        picker.appendChild(h('div', { class: 'picker-group' },
-          h('div', { class: 'picker-group-head' },
-            h('span', { class: 'picker-group-name', text: g.name }),
-            h('span', { class: 'picker-group-hint', text: g.hint })),
-          chips));
-      });
-    }
-
-    paintSlots();
-    paintPicker();
-    wrap.refresh = function () { paintSlots(); paintPicker(); };
-    return wrap;
+    renderEditor();
+    $('editor').hidden = false;
+    document.body.style.overflow = 'hidden';
   }
 
-  /* ====================================================================
-     禮包編輯器面板
-     ==================================================================== */
+  function closeEditor() {
+    $('editor').hidden = true;
+    document.body.style.overflow = '';
+    pad.draft = null;
+    pad.target = null;
+  }
 
-  function openEditor(bundle) {
-    state.editor = bundle
-      ? { id: bundle.id, name: bundle.name, price: bundle.price, qty: cloneQty(bundle.qty), note: bundle.note, enabled: bundle.enabled !== false }
-      : { id: null, name: '', price: null, qty: {}, note: '', enabled: true };
+  /** 數量 0 的物品只在編輯當下留著（方便你刪光重打），離開時要清掉。 */
+  function strippedQty(qty) {
+    var out = {};
+    for (var id in qty) {
+      if (Object.prototype.hasOwnProperty.call(qty, id) && qty[id] > 0) out[id] = qty[id];
+    }
+    return out;
+  }
 
-    $('editorTitle').textContent = bundle ? '編輯禮包' : '新增禮包';
-    $('editorSub').textContent = bundle ? (bundle.name || '未命名') : '點物品丸子加入，數量用鍵盤輸入';
+  function padFocus(target) {
+    // 換焦點時，上一個沒填數量的物品就順手移除，不留空列。
+    if (pad.target && pad.target !== 'price' && !(pad.draft.qty[pad.target] > 0)) {
+      delete pad.draft.qty[pad.target];
+    }
+    pad.target = target;
+    pad.buffer = target === 'price'
+      ? (pad.draft.price ? String(pad.draft.price) : '')
+      : (pad.draft.qty[target] > 0 ? String(pad.draft.qty[target]) : '');
+    renderEditor();
+  }
 
+  function padKey(key) {
+    if (!pad.target) return;
+    if (key === 'back') pad.buffer = pad.buffer.slice(0, -1);
+    else if (key === 'clear') pad.buffer = '';
+    else {
+      if (pad.buffer === '0') pad.buffer = '';
+      if (pad.buffer.length + key.length <= 12) pad.buffer += key;
+    }
+    padCommit();
+  }
+
+  function padQuick(value) {
+    pad.buffer = String(value);
+    padCommit();
+  }
+
+  /** 把 buffer 寫回 draft，並只更新畫面上會變的那幾個字，不整頁重畫。 */
+  function padCommit() {
+    var v = pad.buffer === '' ? 0 : Number(pad.buffer);
+    if (!isFinite(v)) v = 0;
+
+    if (pad.target === 'price') {
+      pad.draft.price = v > 0 ? v : null;
+      if (pad.refs.price) {
+        pad.refs.price.textContent = v > 0 ? group(v) : '0';
+        pad.refs.price.className = 'val' + (v > 0 ? '' : ' is-empty');
+      }
+    } else {
+      pad.draft.qty[pad.target] = v;
+      var ref = pad.refs.rows[pad.target];
+      if (ref) {
+        ref.qty.textContent = v > 0 ? group(v) : '0';
+        ref.sub.textContent = rowSubtitle(pad.target, v);
+      }
+    }
+    paintTotal();
+  }
+
+  function rowSubtitle(id, qty) {
+    var est = state.model && state.model.prices[id];
+    if (!est || !(qty > 0)) return dUnit(id).replace('元 / ', '每 ') + ' —';
+    return dUnit(id).replace('元 / ', '每 ') + ' ' + dPrice(id, est) + ' 元 · 小計 ' + fmtMoney(qty * est) + ' 元';
+  }
+
+  function paintTotal() {
+    if (!pad.refs.total) return;
+    clear(pad.refs.total);
+    var qty = strippedQty(pad.draft.qty);
+    if (!Object.keys(qty).length || !state.model || !state.model.bundleCount) {
+      pad.refs.total.appendChild(h('span', { text: '還沒有基準單價可以估算' }));
+      return;
+    }
+    var ev = WR_EVAL.evaluate({ qty: qty, price: pad.draft.price || 0 }, state.model);
+    pad.refs.total.appendChild(h('span', null, '理論價值 ', h('b', { text: fmtMoney(ev.value) + ' 元' })));
+    if (ev.ratio !== null && ev.tier) {
+      pad.refs.total.appendChild(h('span', { class: 'pill tone-' + ev.tier.tone, style: 'border-color:currentColor' },
+        ev.tier.label + ' ' + ev.ratio.toFixed(2)));
+    }
+  }
+
+  function renderEditor() {
     var body = $('editorBody');
     clear(body);
-    var draft = state.editor;
-    body.appendChild(composer(draft, function () {}, {}));
+    pad.refs = { rows: {} };
+    var d = pad.draft;
 
-    body.appendChild(h('div', { class: 'setting-row', style: 'border:1px solid var(--line); border-radius:var(--radius)' },
-      h('div', { class: 'setting-info' },
-        h('div', { class: 'setting-name', text: '納入推算' }),
-        h('div', { class: 'setting-desc', text: '關掉的話這筆會保留在試算表裡，但不影響單價計算。' })),
-      h('label', { class: 'switch' },
-        h('input', { type: 'checkbox', checked: draft.enabled ? true : null,
-          onchange: function (e) { draft.enabled = e.target.checked; } }),
-        h('span'))));
+    // 售價
+    var priceVal = h('span', { class: 'val' + (d.price ? '' : ' is-empty'), text: d.price ? group(d.price) : '0' });
+    pad.refs.price = priceVal;
+    body.appendChild(h('div', { class: 'field' },
+      h('div', { class: 'ed-label' }, '售價'),
+      h('button', {
+        class: 'ed-price', 'data-focus': pad.target === 'price' ? 'true' : 'false',
+        onclick: function () { padFocus('price'); }
+      }, h('span', { class: 'cur', text: 'NT$' }), priceVal)));
 
-    var foot = $('editorFoot');
-    clear(foot);
-    if (bundle) {
-      foot.appendChild(h('button', { class: 'btn btn-danger', onclick: function () { deleteBundle(bundle); } },
-        h('span', { svg: ICON.trash }), '刪除'));
+    // 內容物
+    var ids = WR_CATALOG.IDS.filter(function (id) {
+      return d.qty[id] > 0 || (pad.target === id && d.qty[id] !== undefined);
+    });
+    var card = h('div', { class: 'slot-card' });
+    if (!ids.length) {
+      card.appendChild(h('div', { class: 'ed-empty', text: '點下面的物品加進來' }));
+    } else {
+      ids.forEach(function (id) {
+        var qtyNode = h('span', { class: 'ed-row-qty', text: group(d.qty[id] || 0) });
+        var subNode = h('div', { class: 'ed-row-sub', text: rowSubtitle(id, d.qty[id]) });
+        pad.refs.rows[id] = { qty: qtyNode, sub: subNode };
+        card.appendChild(h('div', {
+          class: 'ed-row', 'data-focus': pad.target === id ? 'true' : 'false',
+          onclick: function (e) { if (!e.target.closest('.ed-row-x')) padFocus(id); }
+        },
+          h('div', { style: 'min-width:0' },
+            h('div', { class: 'ed-row-name', text: WR_CATALOG.labelOf(id) }),
+            subNode),
+          qtyNode,
+          h('button', {
+            class: 'ed-row-x', 'aria-label': '移除 ' + WR_CATALOG.labelOf(id), svg: ICON.close,
+            onclick: function () {
+              delete d.qty[id];
+              if (pad.target === id) { pad.target = 'price'; pad.buffer = d.price ? String(d.price) : ''; }
+              renderEditor();
+            }
+          })));
+      });
     }
-    foot.appendChild(h('button', { class: 'btn btn-primary', onclick: saveEditor },
-      h('span', { svg: ICON.check }), '儲存'));
+    var total = h('div', { class: 'ed-total' });
+    pad.refs.total = total;
+    if (ids.length) card.appendChild(total);
+    body.appendChild(h('div', { class: 'field' }, h('div', { class: 'ed-label' }, '內容物'), card));
+    paintTotal();
 
-    openSheet('editorSheet');
+    // 加入物品：預設只放常用的，其餘收在「更多」後面
+    var picker = h('div', { class: 'chips' });
+    var list = pad.showAll
+      ? WR_CATALOG.commonItems().concat(WR_CATALOG.restItems())
+      : WR_CATALOG.commonItems();
+    list.forEach(function (item) {
+      var active = d.qty[item.id] > 0;
+      picker.appendChild(h('button', {
+        class: 'chip', 'aria-pressed': active ? 'true' : 'false',
+        onclick: function () {
+          if (d.qty[item.id] === undefined) d.qty[item.id] = 0;
+          padFocus(item.id);
+        }
+      }, item.name, active ? h('span', { class: 'chip-qty', text: fmtQty(d.qty[item.id]) }) : null));
+    });
+
+    var addField = h('div', { class: 'field' },
+      h('div', { class: 'ed-label' }, '加入物品'),
+      picker);
+    if (!pad.showAll) {
+      addField.appendChild(h('button', {
+        class: 'ed-more', onclick: function () { pad.showAll = true; renderEditor(); }
+      }, '更多 ' + WR_CATALOG.restItems().length + ' 項 ▾'));
+    }
+    body.appendChild(addField);
+
+    // 名稱與其他選項：放在最後，因為它們可以完全不填
+    if (pad.mode === 'bundle') {
+      body.appendChild(h('div', { class: 'field' },
+        h('div', { class: 'ed-label' }, '名稱', h('em', { text: '留空會自動命名' })),
+        h('input', {
+          class: 'field-input', type: 'text', id: 'edName',
+          placeholder: autoName(d) || '例如：週末特惠包', value: d.name || '',
+          oninput: function (e) { d.name = e.target.value; }
+        })));
+
+      body.appendChild(h('div', { class: 'setting-row', style: 'border:1px solid var(--line); border-radius:var(--radius)' },
+        h('div', { class: 'setting-info' },
+          h('div', { class: 'setting-name', text: '納入推算' }),
+          h('div', { class: 'setting-desc', text: '關掉的話這筆會保留，但不影響單價計算。' })),
+        h('label', { class: 'switch' },
+          h('input', { type: 'checkbox', checked: d.enabled ? true : null,
+            onchange: function (e) { d.enabled = e.target.checked; } }),
+          h('span'))));
+
+      if (d.id) {
+        body.appendChild(h('button', { class: 'btn btn-danger btn-block', onclick: deleteCurrent },
+          h('span', { svg: ICON.trash }), '刪除這筆'));
+      }
+    }
+
+    renderPad();
+  }
+
+  /** 沒取名字的話，用內容物自動組一個，省掉打字。 */
+  function autoName(d) {
+    var ids = WR_CATALOG.IDS.filter(function (id) { return d.qty[id] > 0; });
+    if (!ids.length) return '';
+    return ids.slice(0, 2).map(function (id) {
+      return WR_CATALOG.nameOf(id) + ' ' + fmtQty(d.qty[id]);
+    }).join(' + ') + (ids.length > 2 ? ' 等' : '');
+  }
+
+  function renderPad() {
+    var el = $('editorPad');
+    clear(el);
+    el.setAttribute('data-active', pad.target ? 'true' : 'false');
+
+    var inner = h('div', { class: 'pad-inner' });
+    var targetName = pad.target === 'price' ? '售價'
+      : (pad.target ? WR_CATALOG.labelOf(pad.target) + ' 的數量' : '');
+    inner.appendChild(h('div', { class: 'pad-hint' },
+      h('span', null, '正在輸入：', h('b', { text: targetName || '—' })),
+      h('button', { class: 'btn btn-sm btn-ghost', onclick: function () { padKey('clear'); } }, '清除')));
+
+    var steps = pad.target === 'price'
+      ? WR_CATALOG.PRICE_STEPS
+      : (pad.target ? (WR_CATALOG.get(pad.target) || {}).steps || [] : []);
+    var quick = h('div', { class: 'pad-quick' });
+    steps.forEach(function (n) {
+      quick.appendChild(h('button', { onclick: function () { padQuick(n); } }, group(n)));
+    });
+    inner.appendChild(quick);
+
+    var grid = h('div', { class: 'pad-grid' });
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (n) {
+      grid.appendChild(h('button', { text: n, onclick: function () { padKey(n); } }));
+    });
+    grid.appendChild(h('button', { class: 'k-util', text: '000', onclick: function () { padKey('000'); } }));
+    grid.appendChild(h('button', { text: '0', onclick: function () { padKey('0'); } }));
+    grid.appendChild(h('button', { class: 'k-util', 'aria-label': '刪除一位', svg: ICON.backspace,
+      onclick: function () { padKey('back'); } }));
+    inner.appendChild(grid);
+
+    el.appendChild(inner);
   }
 
   function saveEditor() {
-    var d = state.editor;
+    var d = pad.draft;
     if (!d) return;
-    if (!(d.price > 0)) { toast('請先輸入售價'); return; }
-    if (!Object.keys(d.qty).length) { toast('至少要加入一項物品'); return; }
+    var qty = strippedQty(d.qty);
 
-    closeSheet('editorSheet');
+    if (pad.mode === 'draft') {
+      state.draft = { name: d.name || '', price: d.price, qty: qty };
+      closeEditor();
+      render();
+      return;
+    }
+
+    if (!(d.price > 0)) { toast('請先輸入售價'); padFocus('price'); return; }
+    if (!Object.keys(qty).length) { toast('至少要加入一項物品'); return; }
+
+    var payload = {
+      id: d.id, name: d.name || autoName(d), price: d.price,
+      qty: qty, note: d.note, enabled: d.enabled
+    };
+    var isNew = !d.id;
+    closeEditor();
     busy(true);
-    WRBridge.call('saveBundle', {
-      id: d.id, name: d.name, price: d.price, qty: d.qty, note: d.note, enabled: d.enabled
-    }).then(function (res) {
+    WRBridge.call('saveBundle', payload).then(function (res) {
       state.bundles = res.bundles;
       recompute();
       render();
-      toast(d.id ? '已更新' : '已新增禮包');
+      toast(isNew ? '已新增禮包' : '已更新');
     }).catch(failed).then(function () { busy(false); });
   }
 
-  function deleteBundle(bundle) {
-    if (!window.confirm('確定要刪除「' + (bundle.name || '未命名禮包') + '」嗎？')) return;
-    closeSheet('editorSheet');
+  function deleteCurrent() {
+    var d = pad.draft;
+    if (!d || !d.id) return;
+    if (!window.confirm('確定要刪除「' + (d.name || '未命名禮包') + '」嗎？')) return;
+    closeEditor();
     busy(true);
-    WRBridge.call('deleteBundle', bundle.id).then(function (res) {
+    WRBridge.call('deleteBundle', d.id).then(function (res) {
       state.bundles = res.bundles;
       recompute();
       render();
@@ -638,45 +758,52 @@
       return;
     }
 
-    var result = h('div', { style: 'display:flex; flex-direction:column; gap:22px' });
+    var d = state.draft;
+    var qty = WR_CATALOG.IDS.filter(function (id) { return d.qty[id] > 0; });
+    var ready = d.price > 0 && qty.length > 0;
 
-    var comp = composer(state.draft, function () { paintResult(); }, { hideName: true });
+    // 輸入一律走同一個編輯器，全 app 只有一個輸入介面要學。
+    var summary = h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:12px' });
+    if (ready) {
+      summary.appendChild(h('div', { style: 'display:flex; align-items:baseline; justify-content:space-between; gap:12px' },
+        h('div', { class: 'num', style: 'font-size:26px; font-weight:700; letter-spacing:-0.03em' },
+          h('span', { style: 'font-size:12px; color:var(--ink-3); margin-right:4px', text: 'NT$' }),
+          group(d.price)),
+        h('button', { class: 'btn btn-sm', onclick: function () { openEditor(null, 'draft'); } }, '編輯')));
+      summary.appendChild(h('div', { class: 'bundle-items' }, qty.map(function (id) {
+        return h('span', { class: 'tag' }, WR_CATALOG.labelOf(id), h('b', { text: fmtQty(d.qty[id]) }));
+      })));
+    } else {
+      summary.appendChild(h('div', { class: 'ed-empty', style: 'padding:14px 4px' },
+        '輸入售價和內容物，就會即時算出性價比'));
+      summary.appendChild(h('button', {
+        class: 'btn btn-primary btn-block', onclick: function () { openEditor(null, 'draft'); }
+      }, h('span', { svg: ICON.plus }), '建立要評估的組合'));
+    }
 
     root.appendChild(h('section', { class: 'section' },
       h('div', { class: 'section-head' },
         h('div', { class: 'section-title', text: '要評估的組合' }),
-        h('button', { class: 'btn btn-sm btn-ghost', onclick: function () {
+        ready ? h('button', { class: 'btn btn-sm btn-ghost', onclick: function () {
           state.draft = { name: '', price: null, qty: {} };
-          renderEvaluate();
-        } }, '清空')),
-      h('div', { class: 'card card-pad' }, comp)));
+          render();
+        } }, '清空') : null),
+      summary));
 
-    root.appendChild(result);
-    paintResult();
+    if (!ready) return;
 
-    function paintResult() {
-      clear(result);
-      var d = state.draft;
-      if (!(d.price > 0) || !Object.keys(d.qty).length) {
-        result.appendChild(h('div', { class: 'notice' },
-          h('span', { class: 'ico', svg: ICON.alert }),
-          h('span', { text: '輸入售價並加入至少一項物品，下面就會即時算出性價比。' })));
-        return;
-      }
-      var ev = WR_EVAL.evaluate({ qty: d.qty, price: d.price }, m);
-      result.appendChild(verdictCard(ev));
-      result.appendChild(compareCard(ev));
-      if (ev.contributions.length) result.appendChild(contributionCard(ev));
-      if (ev.unpriced.length) {
-        result.appendChild(h('div', { class: 'notice notice-warn' },
-          h('span', { class: 'ico', svg: ICON.alert }),
-          h('span', { text: '這些物品還沒有基準單價，沒有被算進理論價值：' +
-            ev.unpriced.map(function (u) { return u.label; }).join('、') + '。先記一筆含有它們的禮包就會出現。' })));
-      }
-      result.appendChild(h('div', { style: 'display:flex; gap:9px' },
-        h('button', { class: 'btn btn-block', onclick: function () { logEvaluation(ev); } },
-          h('span', { svg: ICON.sync }), '存進試算紀錄')));
+    var ev = WR_EVAL.evaluate({ qty: d.qty, price: d.price }, m);
+    root.appendChild(verdictCard(ev));
+    root.appendChild(compareCard(ev));
+    if (ev.contributions.length) root.appendChild(contributionCard(ev));
+    if (ev.unpriced.length) {
+      root.appendChild(h('div', { class: 'notice notice-warn' },
+        h('span', { class: 'ico', svg: ICON.alert }),
+        h('span', { text: '這些物品還沒有基準單價，沒有被算進理論價值：' +
+          ev.unpriced.map(function (u) { return u.label; }).join('、') + '。先記一筆含有它們的禮包就會出現。' })));
     }
+    root.appendChild(h('button', { class: 'btn btn-block', onclick: function () { logEvaluation(ev); } },
+      h('span', { svg: ICON.sync }), '存進試算紀錄'));
   }
 
   function verdictCard(ev) {
@@ -1161,76 +1288,18 @@
     }).catch(failed).then(function () { busy(false); });
   }
 
-  /* ====================================================================
-     數字鍵盤
-     ==================================================================== */
-
-  var pad = { value: '', onDone: null, unit: '' };
-
-  function openPad(cfg) {
-    pad.value = cfg.value ? String(Math.round(cfg.value)) : '';
-    pad.onDone = cfg.onDone;
-    pad.unit = cfg.unit || '';
-    $('padTitle').textContent = cfg.title;
-    $('padSub').textContent = cfg.sub || '';
-
-    var quick = $('padQuick');
-    clear(quick);
-    (cfg.steps || []).forEach(function (n) {
-      quick.appendChild(h('button', { class: 'chip', onclick: function () { pad.value = String(n); paintPad(); } },
-        group(n)));
-    });
-
-    paintPad();
-    openSheet('padSheet');
-  }
-
-  function paintPad() {
-    var d = $('padDisplay');
-    clear(d);
-    var empty = pad.value === '' || Number(pad.value) === 0;
-    d.className = 'keypad-display' + (empty ? ' is-empty' : '');
-    if (pad.unit) d.appendChild(h('span', { class: 'unit', text: pad.unit }));
-    d.appendChild(document.createTextNode(pad.value === '' ? '0' : group(Number(pad.value))));
-  }
-
-  function padPress(key) {
-    if (key === 'back') pad.value = pad.value.slice(0, -1);
-    else if (key === 'clear') pad.value = '';
-    else {
-      if (pad.value === '0') pad.value = '';
-      if (pad.value.length < 12) pad.value += key;
-    }
-    paintPad();
-  }
-
-  function buildPad() {
-    var grid = $('padGrid');
-    clear(grid);
-    ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (n) {
-      grid.appendChild(h('button', { text: n, onclick: function () { padPress(n); } }));
-    });
-    grid.appendChild(h('button', { class: 'key-util', text: '000', onclick: function () { padPress('000'); } }));
-    grid.appendChild(h('button', { text: '0', onclick: function () { padPress('0'); } }));
-    grid.appendChild(h('button', { class: 'key-util', 'aria-label': '刪除一位', svg: ICON.backspace,
-      onclick: function () { padPress('back'); } }));
-
-    $('padClear').addEventListener('click', function () { padPress('clear'); });
-    $('padDone').addEventListener('click', function () {
-      var v = pad.value === '' ? 0 : Number(pad.value);
-      closeSheet('padSheet');
-      if (pad.onDone) pad.onDone(v);
-    });
-    $('padClose').addEventListener('click', function () { closeSheet('padSheet'); });
-  }
-
-  // 電腦上直接打實體鍵盤也要能用
+  // 電腦上直接打實體鍵盤也要能用。名稱欄位是真的文字輸入，要讓它自己處理。
   document.addEventListener('keydown', function (e) {
-    if ($('padSheet').getAttribute('data-open') !== 'true') return;
-    if (e.key >= '0' && e.key <= '9') { padPress(e.key); e.preventDefault(); }
-    else if (e.key === 'Backspace') { padPress('back'); e.preventDefault(); }
-    else if (e.key === 'Enter') { $('padDone').click(); e.preventDefault(); }
-    else if (e.key === 'Escape') { closeSheet('padSheet'); e.preventDefault(); }
+    if ($('editor').hidden) return;
+    var tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+    if (e.key >= '0' && e.key <= '9') { padKey(e.key); e.preventDefault(); }
+    else if (e.key === 'Backspace') { padKey('back'); e.preventDefault(); }
+    else if (e.key === 'Enter') { saveEditor(); e.preventDefault(); }
+    else if (e.key === 'Escape') { closeEditor(); e.preventDefault(); }
   });
 
   /* ====================================================================
@@ -1350,8 +1419,9 @@
       if (saved) document.documentElement.setAttribute('data-theme', saved);
     } catch (e) { /* 忽略 */ }
 
-    buildPad();
-    $('editorClose').addEventListener('click', function () { closeSheet('editorSheet'); });
+    $('editorBack').innerHTML = ICON.back;
+    $('editorBack').addEventListener('click', closeEditor);
+    $('editorSave').addEventListener('click', saveEditor);
     $('connectClose').addEventListener('click', function () { closeSheet('connectSheet'); });
     $('importClose').addEventListener('click', function () { closeSheet('importSheet'); });
     $('scrim').addEventListener('click', function () {
