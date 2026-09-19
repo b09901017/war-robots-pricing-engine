@@ -95,8 +95,14 @@
     settings: clone(DEFAULT_SETTINGS),
     priors: {},
     model: null,
-    /** 四種算法的對照。跑一次要近百毫秒，所以按需計算並快取，資料沒變就不重跑。 */
+    /**
+     * 四種算法的對照模型。建一次要 0.2～0.5 秒，但它只跟「禮包 + 參考值 + 設定」
+     * 有關，跟你正在打的那一包無關 —— 所以建一次就存著，之後每按一個數字只要
+     * 拿現成的模型各評一次（不到一毫秒），四個答案才能跟著打字即時更新。
+     */
     compare: null,
+    /** 上面那份快取要比對的指紋，由 recompute() 維護。 */
+    compareKey: '',
     spreadsheetUrl: '',
     spreadsheetName: '',
     editor: null,
@@ -105,6 +111,8 @@
     filter: { items: [], sort: 'date' },
     /** 看板上那排「資料說明」是否展開。 */
     showNotes: false,
+    /** 試算頁「每一種算法在做什麼」是否展開。 */
+    showMethodNotes: false,
     busy: false
   };
 
@@ -170,12 +178,83 @@
       bootstrap: false
     }));
     // 資料或設定變了，四種算法的對照就過期了。
-    if (state.compare && state.compare.key !== compareKey()) state.compare = null;
+    state.compareKey = compareKey();
+    if (state.compare && state.compare.key !== state.compareKey) state.compare = null;
   }
 
   /** 對照結果的有效性指紋：禮包、參考值、推算設定，任何一個動了就要重算。 */
   function compareKey() {
     return JSON.stringify([state.bundles, state.priors, state.settings]);
+  }
+
+  var compareTimer = null;
+  /**
+   * 等著模型建好的人，用「誰在等」當 key 而不是排成一列 ——
+   * 編輯器每按一個鍵就會問一次，排成一列的話建好之後會把同一塊畫面重畫幾十遍。
+   */
+  var compareWaiters = {};
+  /** 上一次建模型失敗的指紋。同一份資料不再重試，否則會在「重畫→重建→失敗」之間空轉。 */
+  var compareError = null;
+
+  function compareReady() {
+    return !!(state.compare && state.compare.key === state.compareKey);
+  }
+
+  function compareBroken() {
+    return compareError !== null && compareError.key === state.compareKey;
+  }
+
+  /**
+   * 確保四種算法的模型已經建好。
+   *
+   * 建模型是同步的、要花好幾百毫秒，直接在 render 裡跑會讓畫面卡住不動，
+   * 所以排到下一個 tick 再跑：這一輪先畫出「計算中」，建完了再叫 onReady
+   * 重畫一次。同一時間只會排一個，等待的人排隊等同一份結果。
+   *
+   * @returns {boolean} true = 現在就能用；false = 已排入，好了會通知
+   */
+  function ensureCompare(who, onReady) {
+    if (compareReady()) return true;
+    if (compareBroken()) return false;
+    if (onReady) compareWaiters[who] = onReady;
+    if (compareTimer) return false;
+    compareTimer = setTimeout(function () {
+      compareTimer = null;
+      try {
+        state.compare = { key: state.compareKey, variants: WR_COMPARE.build(state.bundles, engineOptions()) };
+        compareError = null;
+      } catch (err) {
+        console.error(err);
+        compareError = { key: state.compareKey, message: (err && err.message) || String(err) };
+      }
+      var waiting = compareWaiters;
+      compareWaiters = {};
+      for (var k in waiting) {
+        if (Object.prototype.hasOwnProperty.call(waiting, k)) waiting[k]();
+      }
+    }, 16);
+    return false;
+  }
+
+  /**
+   * 金額區間。上下界四捨五入後長得一樣就只寫一個數字 ——
+   * 判準是「印出來一不一樣」而不是「差多少」：差 0.4 元卻印成
+   * 「44 – 44」的話，那個破折號只是在製造雜訊。
+   */
+  function moneyRange(low, high) {
+    if (low === null || high === null || low === undefined || high === undefined) return '—';
+    var a = fmtMoney(low);
+    var b = fmtMoney(high);
+    return a === b ? a : a + ' – ' + b;
+  }
+
+  /** 性價比區間，同上。 */
+  function ratioRange(row) {
+    if (row.ratio === null) return '—';
+    if (row.ratioLow === null || row.ratioHigh === null) return row.ratio.toFixed(2);
+    var a = row.ratioLow.toFixed(2);
+    var b = row.ratioHigh.toFixed(2);
+    return a === b ? a : a + ' – ' + b;
   }
 
   var recomputeTimer = null;
@@ -330,7 +409,7 @@
     });
 
     root.appendChild(h('section', { class: 'section' }, head,
-      h('div', { class: 'section-note', text: '每個數字是「這個計價單位值多少台幣」，例如金幣與鑰匙都是每 1K。資料卡買不到半張，所以維持每張計價。淺色橫條是 80% 可能區間，直線是點估計。' }),
+      h('div', { class: 'section-note', text: '每個數字是「這個計價單位值多少台幣」，例如金幣與鑰匙都是每 1K。資料卡買不到半張，所以維持每張計價。淺色橫條是 80% 可能區間，直線是點估計；紫色虛線框是行情參考價 —— 它只是拿來對照的，不參與任何計算。' }),
       board));
 
     root.appendChild(fitSection(m));
@@ -412,10 +491,17 @@
       ? Math.abs(altPrice - it.price) / it.price : 0;
     var otherLabel = state.settings.dropDominatedSingles !== false ? '平均行情' : '最好價格';
 
+    // 行情參考價：使用者自己給的市場行情，沒有進過求解。
+    // 放在這裡是因為「解出來的數字合不合理」只有跟它對照才看得出來。
+    var ref = WR_CATALOG.refOf(it.id);
+
     row.appendChild(h('div', { class: 'price-row-value num' },
       dPrice(it.id, it.price), h('span', { class: 'unit', text: dUnit(it.id) }),
       altGap > 0.03
         ? h('span', { class: 'price-alt', text: otherLabel + ' ' + dPrice(it.id, altPrice) })
+        : null,
+      ref
+        ? h('span', { class: 'price-alt price-ref' }, '行情參考 ', h('b', { text: WR_CATALOG.formatRef(it.id) }))
         : null));
 
     var hasBand = it.price > 0 && it.low !== null && it.high !== null && it.occurrences >= 2;
@@ -431,6 +517,19 @@
         text: '但有效觀測只有 ' + it.effectiveObs.toFixed(1) + ' 次' }) : null,
       hasBand ? h('span', { text: dPrice(it.id, it.low) + ' – ' + dPrice(it.id, it.high) }) : null
     ));
+
+    // 偏離行情參考價太多的時候直接寫出來。門檻訂在 25%：低於這個數的差距
+    // 在這種等級的資料上本來就分不出是真的便宜還是模型誤差，寫出來只是雜訊。
+    if (ref && it.price > 0) {
+      var shown = WR_CATALOG.toDisplayPrice(it.id, it.price);
+      if (shown < ref.low * 0.75) {
+        row.appendChild(refNote('比你給的行情參考價低 ' + pct(1 - shown / ref.low) +
+          '。商城這幾包確實比行情便宜，或者這個物品的價值被同包的其他東西吸走了。'));
+      } else if (shown > ref.high * 1.25) {
+        row.appendChild(refNote('比你給的行情參考價高 ' + pct(shown / ref.high - 1) +
+          '。你記到的禮包偏貴，或者這個物品的單價被同包的其他東西墊高了。'));
+      }
+    }
 
     if (thin) {
       row.appendChild(note('它幾乎總是跟別的物品一起出現，方程式分不出各自的價值。' +
@@ -456,6 +555,11 @@
     return h('div', { class: 'price-row-meta', style: 'color:var(--serious-ink)' }, h('span', { text: text }));
   }
 
+  /** 行情參考價相關的提示：用它自己的顏色，跟「資料有問題」那種警告區分開。 */
+  function refNote(text) {
+    return h('div', { class: 'price-row-meta', style: 'color:var(--ref-ink)' }, h('span', { text: text }));
+  }
+
   /**
    * 區間條：橫軸是「相對於這個物品自己的點估計」，從 0 到 2 倍。
    * 每一列都用自己的尺度，所以條子的寬度就是相對不確定性 —— 銀幣跟終極資料卡
@@ -468,13 +572,29 @@
     var hi = clamp(it.high);
     var overflow = it.high > max;
 
+    // 行情參考價畫在同一條軸上。軸的單位是「每 1 單位的原始單價」，
+    // 而 refUnitOf 回的也是原始單價，所以可以直接比 —— 這是刻意的：
+    // 只要有一邊用顯示單位，這條線就會歪掉而且沒有人看得出來。
+    var ref = WR_CATALOG.refUnitOf(it.id);
+    var refLabel = ref ? '，行情參考 ' + WR_CATALOG.formatRef(it.id) + ' ' + dUnit(it.id) : '';
+
     var bar = h('div', { class: 'range', role: 'img',
       'aria-label': it.label + ' 每 ' + (WR_CATALOG.perLabel(it.id) || '1') + ' 單位 ' + dPrice(it.id, it.price) +
-        ' 元，可能區間 ' + dPrice(it.id, it.low) + ' 到 ' + dPrice(it.id, it.high) + ' 元' },
+        ' 元，可能區間 ' + dPrice(it.id, it.low) + ' 到 ' + dPrice(it.id, it.high) + ' 元' + refLabel },
       h('div', { class: 'range-track' }),
       h('div', { class: 'range-band', style: 'left:' + (lo * 100) + '%; width:' + Math.max(1.5, (hi - lo) * 100) + '%' }),
       h('div', { class: 'range-point', style: 'left:calc(50% - 1.5px)' })
     );
+
+    if (ref && ref.low < max) {
+      var rl = clamp(ref.low);
+      var rh = clamp(ref.high);
+      bar.appendChild(h('div', {
+        class: 'range-ref', 'data-point': ref.single ? 'true' : 'false',
+        style: 'left:' + (rl * 100) + '%; width:' + (ref.single ? 0 : Math.max(1.5, (rh - rl) * 100)) + '%'
+      }));
+    }
+
     if (overflow) bar.appendChild(h('div', { class: 'range-overflow', text: '▸ ' + dPrice(it.id, it.high) }));
     return bar;
   }
@@ -875,19 +995,67 @@
       ' 元 · 小計 ' + fmtMoney(qty * est) + ' 元';
   }
 
+  /**
+   * 編輯器底部那條「邊打邊看的四個答案」。
+   *
+   * 舊版只印一個理論價值 —— 但那個數字取決於看板現在剛好選了哪種算法，
+   * 而使用者在這裡正在做的是一個決定（這包要不要買），看單一算法的一句話不夠。
+   * 四個並排唯一的成本是「先把四個模型建好」，之後每按一鍵都是現成的。
+   *
+   * 這個函式每按一個數字就會跑一次，所以裡面不准出現建模型這種等級的工作。
+   */
   function paintTotal() {
-    if (!pad.refs.total) return;
-    clear(pad.refs.total);
+    var host = pad.refs.total;
+    if (!host) return;
+    clear(host);
+
     var qty = strippedQty(pad.draft.qty);
+    var price = pad.draft.price || 0;
     if (!Object.keys(qty).length || !state.model || !state.model.bundleCount) {
-      pad.refs.total.appendChild(h('span', { text: '還沒有基準單價可以估算' }));
+      host.appendChild(h('div', { class: 'ed-vwait', text: '還沒有基準單價可以估算' }));
       return;
     }
-    var ev = WR_EVAL.evaluate({ qty: qty, price: pad.draft.price || 0 }, state.model);
-    pad.refs.total.appendChild(h('span', null, '理論價值 ', h('b', { text: fmtMoney(ev.value) + ' 元' })));
-    if (ev.ratio !== null && ev.tier) {
-      pad.refs.total.appendChild(h('span', { class: 'pill tone-' + ev.tier.tone, style: 'border-color:currentColor' },
-        ev.tier.label + ' ' + ev.ratio.toFixed(2)));
+
+    var candidate = { qty: qty, price: price };
+    var ready = ensureCompare('editor', function () { if (pad.draft) paintTotal(); });
+
+    host.appendChild(h('div', { class: 'ed-verdicts-head' },
+      h('span', { text: '預估價錢 / 性價比' }),
+      h('em', { text: price > 0 ? '售價 NT$' + group(price) : '還沒填售價' })));
+
+    // 模型還在建的這幾十毫秒，先用看板那一個算法頂著 —— 總比整塊空白好。
+    if (!ready) {
+      var one = WR_EVAL.evaluate(candidate, state.model);
+      host.appendChild(h('div', { class: 'ed-vwait', text:
+        fmtMoney(one.value) + ' 元' +
+        (one.ratio === null ? '' : ' · 性價比 ' + one.ratio.toFixed(2)) +
+        (compareBroken() ? '（四種算法算不出來：' + compareError.message + '）' : '（四種算法計算中…）') }));
+      return;
+    }
+
+    var rows = WR_COMPARE.rows(candidate, state.compare.variants, state.model);
+    var algos = rows.filter(function (r) { return !r.isRef; });
+    var ref = rows.filter(function (r) { return r.isRef; })[0];
+
+    var grid = h('div', { class: 'ed-vgrid',
+      style: 'grid-template-columns: repeat(' + Math.max(1, algos.length) + ', minmax(0, 1fr))' });
+    algos.forEach(function (r) {
+      grid.appendChild(h('div', {
+        class: 'ed-v', 'data-current': r.key === state.settings.method ? 'true' : 'false'
+      },
+        h('div', { class: 'ed-v-name', text: r.short }),
+        h('div', { class: 'ed-v-ratio tone-' + (r.tier ? r.tier.tone : 'neutral'),
+          text: r.ratio === null ? '—' : r.ratio.toFixed(2) }),
+        h('div', { class: 'ed-v-money', text: fmtMoney(r.value) + ' 元' })));
+    });
+    host.appendChild(grid);
+
+    if (ref) {
+      host.appendChild(h('div', { class: 'ed-vref' },
+        h('span', { text: '行情參考' }),
+        h('span', null,
+          h('b', { text: moneyRange(ref.valueLow, ref.valueHigh) + ' 元' }),
+          ref.ratio === null ? null : h('span', { text: ' · 指數 ' + ratioRange(ref) }))));
     }
   }
 
@@ -938,7 +1106,7 @@
           })));
       });
     }
-    var total = h('div', { class: 'ed-total' });
+    var total = h('div', { class: 'ed-verdicts' });
     pad.refs.total = total;
     if (ids.length) card.appendChild(total);
     body.appendChild(h('div', { class: 'field' }, h('div', { class: 'ed-label' }, '內容物'), card));
@@ -1176,7 +1344,10 @@
         h('div', { class: 'verdict-value num', text: ev.ratio.toFixed(2) }),
         ev.ratioLow !== null
           ? h('div', { class: 'verdict-range', text: '可能區間 ' + ev.ratioLow.toFixed(2) + ' – ' + ev.ratioHigh.toFixed(2) })
-          : null),
+          : null,
+        // 指數是個比值，光看比值不知道在講多少錢。預估價錢放在同一塊，
+        // 「值 612 元但賣你 500」跟「1.22」是同一句話的兩種說法。
+        h('div', { class: 'verdict-range', text: '預估價錢 ' + fmtMoney(ev.value) + ' 元 · 售價 ' + fmtMoney(ev.price) + ' 元' })),
       h('div', { class: 'badge' }, h('span', { class: 'ico', svg: icons[tier.tone] }), tier.label)
     ));
 
@@ -1192,90 +1363,123 @@
   }
 
   /* --------------------------------------------------------------
-     四種算法並排
+     四種算法並排：預估價錢 × 性價比
 
      重點不是挑出「最準的那個」—— 而是看結論穩不穩。四個都說超值，
      那個判斷就跟算法怎麼選無關；彼此打架，代表結論是假設撐起來的，
      該去多記幾包而不是照著買。
 
-     跑一次四個模型將近 100 毫秒，所以不在每次打字時重算：按一次算一次，
-     資料沒變就一直沿用。
+     每一列都同時給「預估價錢」與「性價比」，因為只看指數會漏掉一件事：
+     兩種算法可以給出一模一樣的指數，卻是用差很多的價值估出來的。
+
+     舊版要按一下按鈕才算。那個按鈕存在的唯一理由是「建模型要花半秒」，
+     但代價是多數人根本沒按過，等於四種算法白寫了 —— 現在改成一進來就排進
+     下一個 tick 自己算，這一輪先畫「計算中」，算完自己重畫。
      -------------------------------------------------------------- */
 
   function methodsCard(candidate) {
     var sec = h('section', { class: 'section' },
       h('div', { class: 'section-head' },
         h('div', { class: 'section-title', text: '四種算法怎麼說' }),
-        state.compare
-          ? h('button', { class: 'btn btn-sm btn-ghost', onclick: function () { state.compare = null; render(); } }, '收起')
-          : null));
+        h('div', { class: 'section-note', text: '同一包、同一批禮包，各算一次' })));
 
-    if (!state.compare) {
-      sec.appendChild(h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:10px' },
-        h('div', { class: 'section-note', style: 'margin:0', text:
-          '同一批禮包用四種不同的算法各算一次，並排比較。四個都同意的話，這個結論就不是算法選出來的。' }),
-        h('button', { class: 'btn btn-primary btn-block', onclick: runCompare },
-          h('span', { svg: ICON.calc }), '用四種算法比較')));
+    if (!ensureCompare('view', render)) {
+      sec.appendChild(h('div', { class: 'card card-pad' },
+        h('div', { class: 'ed-empty', style: 'padding:18px 4px',
+          text: compareBroken() ? '四種算法算不出來：' + compareError.message : '四種算法計算中…' })));
       return sec;
     }
 
-    var list = WR_COMPARE.verdicts(candidate, state.compare.variants);
-    var con = WR_COMPARE.consensus(list);
+    var rows = WR_COMPARE.rows(candidate, state.compare.variants, state.model);
+    var algos = rows.filter(function (r) { return !r.isRef; });
+    var ref = rows.filter(function (r) { return r.isRef; })[0];
 
     var card = h('div', { class: 'card', style: 'overflow:hidden' });
-    list.forEach(function (v) {
-      var ev = v.ev;
-      var tone = ev.tier ? ev.tier.tone : 'neutral';
-      var row = h('div', { class: 'method-row' });
-
-      row.appendChild(h('div', { class: 'method-name' },
-        h('div', { class: 'method-label' }, v.label,
-          v.key === state.settings.method ? h('span', { class: 'pill conf-high', style: 'margin-left:6px' }, '看板用這個') : null),
-        h('div', { class: 'method-blurb', text: v.blurb })));
-
-      row.appendChild(h('div', { class: 'method-figure' },
-        h('div', { class: 'method-ratio num tone-' + tone, text: ev.ratio === null ? '—' : ev.ratio.toFixed(2) }),
-        ev.ratioLow !== null
-          ? h('div', { class: 'method-range', text: ev.ratioLow.toFixed(2) + ' – ' + ev.ratioHigh.toFixed(2) })
-          : h('div', { class: 'method-range', text: '無區間' }),
-        h('div', { class: 'badge badge-sm tone-' + tone, text: ev.tier ? ev.tier.label : '—' })));
-
-      card.appendChild(row);
-    });
-
+    card.appendChild(h('div', { class: 'mtx-head' },
+      h('span', { text: '算法' }), h('span', { text: '預估價錢' }), h('span', { text: '性價比' })));
+    rows.forEach(function (r) { card.appendChild(methodRow(r, candidate.price)); });
     sec.appendChild(card);
+
+    // 一致性只看四種算法。行情參考不是算法，把它算進共識等於讓
+    // 「使用者自己填的數字」去投票決定「資料說了什麼」。
+    var con = WR_COMPARE.consensus(algos);
     sec.appendChild(h('div', { class: 'notice' + (con.level === 'weak' ? ' notice-warn' : '') },
       h('span', { class: 'ico', svg: con.level === 'weak' ? ICON.alert : ICON.check }),
       h('span', { text: con.text })));
 
+    if (ref && ref.ref.coverage < 0.999) {
+      sec.appendChild(h('div', { class: 'notice' },
+        h('span', { class: 'ico', svg: ICON.alert }),
+        h('span', { text: '行情參考那一列有 ' + pct(1 - ref.ref.coverage) + ' 的價值是用解出來的單價補上的 —— ' +
+          ref.ref.filled.map(function (f) { return f.label; }).join('、') +
+          ' 沒有行情參考價（資料卡的價值取決於開出什麼，本來就沒有公定行情）。' })));
+    }
+
     // 貝氏的區間通常明顯比其他三個寬，那不是它比較差，而是另外三個低估了。
-    var bayes = list.filter(function (v) { return v.key === 'bayes'; })[0];
-    if (bayes && bayes.ev.ratioLow !== null) {
-      var others = list.filter(function (v) { return v.key !== 'bayes' && v.ev.ratioLow !== null; });
+    var bayes = algos.filter(function (r) { return r.key === 'bayes'; })[0];
+    if (bayes && bayes.ratioLow !== null) {
       var widest = 0;
-      others.forEach(function (v) { widest = Math.max(widest, v.ev.ratioHigh - v.ev.ratioLow); });
-      var mine = bayes.ev.ratioHigh - bayes.ev.ratioLow;
+      algos.forEach(function (r) {
+        if (r.key !== 'bayes' && r.ratioLow !== null) widest = Math.max(widest, r.ratioHigh - r.ratioLow);
+      });
+      var mine = bayes.ratioHigh - bayes.ratioLow;
       if (widest > 0 && mine > widest * 1.8) {
         sec.appendChild(h('div', { class: 'section-note', text:
           '完整貝氏的區間明顯比其他三個寬。那不是它算得比較差 —— 重抽法在「資料本來就分不出來」的情況下' +
           '每次都會收斂到同一個答案，於是區間很窄，但那個穩定是假的。這裡寬的那個才是誠實的。' }));
       }
     }
+
+    // 每一種在做什麼：需要的時候才讀，不要每次打開都擋在數字前面。
+    sec.appendChild(h('button', {
+      class: 'notice notice-toggle', 'aria-expanded': state.showMethodNotes ? 'true' : 'false',
+      onclick: function () { state.showMethodNotes = !state.showMethodNotes; render(); }
+    },
+      h('span', { class: 'ico', svg: ICON.tune }),
+      h('span', { text: state.showMethodNotes ? '收起「每一種在做什麼」' : '每一種在做什麼？（點開看說明）' })));
+    if (state.showMethodNotes) {
+      rows.forEach(function (r) {
+        sec.appendChild(h('div', { class: 'section-note', style: 'padding:2px 0' },
+          h('b', { text: r.label + '：' }), r.blurb));
+      });
+    }
     return sec;
   }
 
-  function runCompare() {
-    busy(true);
-    // 讓瀏覽器先把「計算中」畫出來，再開始這近百毫秒的同步運算。
-    setTimeout(function () {
-      try {
-        state.compare = { key: compareKey(), variants: WR_COMPARE.build(state.bundles, engineOptions()) };
-      } catch (err) {
-        failed(err);
-      }
-      busy(false);
-      render();
-    }, 16);
+  /** 矩陣裡的一列。行情參考那一列的數字是區間，所以兩欄都要能吃區間。 */
+  function methodRow(r, price) {
+    var tone = r.tier ? r.tier.tone : 'neutral';
+    var row = h('div', { class: 'mtx-row' + (r.isRef ? ' mtx-row-ref' : '') });
+
+    row.appendChild(h('div', { style: 'min-width:0' },
+      h('div', { class: 'mtx-name' }, r.label,
+        (!r.isRef && r.key === state.settings.method)
+          ? h('span', { class: 'pill conf-high' }, h('span', { class: 'dot' }), '看板用這個') : null,
+        r.isRef ? h('span', { class: 'pill pill-ref' }, '不參與計算') : null),
+      h('div', { class: 'mtx-tip', text: r.tip })));
+
+    // 每一格都是「大數字 + 一行小字」，兩欄五列共用同一個結構。
+    // 行情參考那一列本來把整個區間塞進大數字，但 NT$4,206 – 5,008 在手機上
+    // 會撐破固定欄寬、把整張表的對齊弄歪 —— 區間退到小字那一行，
+    // 剛好跟右邊「指數 + 指數區間」的寫法一致。
+    var gap = (price > 0 && r.value !== null) ? r.value - price : null;
+    var span = r.isRef ? moneyRange(r.valueLow, r.valueHigh) : null;
+    row.appendChild(h('div', { class: 'mtx-money' },
+      h('span', null,
+        h('span', { class: 'cur', text: 'NT$' }),
+        h('b', { text: fmtMoney(r.value) })),
+      r.isRef
+        ? (span === fmtMoney(r.value) ? null : h('small', { text: span }))
+        : (gap === null ? null
+          : h('small', { text: (gap >= 0 ? '比售價多 ' : '比售價少 ') + fmtMoney(Math.abs(gap)) }))));
+
+    row.appendChild(h('div', { class: 'mtx-ratio' },
+      h('b', { class: 'tone-' + tone, text: r.ratio === null ? '—' : r.ratio.toFixed(2) }),
+      r.ratioLow !== null && ratioRange(r) !== r.ratio.toFixed(2)
+        ? h('small', { text: ratioRange(r) }) : null,
+      r.tier ? h('span', { class: 'tier tone-' + tone, text: r.tier.label }) : null));
+
+    return row;
   }
 
   function compareCard(ev) {
@@ -1342,11 +1546,26 @@
     var contents = ev.contributions.map(function (c) {
       return WR_CATALOG.labelOf(c.id) + ' ' + group(c.qty);
     }).join('、');
+
+    // 只存看板那一個算法的結論，過幾天回頭看會不知道當時另外三個怎麼說，
+    // 而「四個算法是不是一致」正是這筆紀錄最值錢的部分，所以一起寫進去。
+    var methods = '';
+    var reference = '';
+    if (compareReady()) {
+      var rows = WR_COMPARE.rows({ qty: state.draft.qty, price: ev.price }, state.compare.variants, state.model);
+      methods = rows.filter(function (r) { return !r.isRef; }).map(function (r) {
+        return r.short + ' ' + (r.ratio === null ? '—' : r.ratio.toFixed(2));
+      }).join(' / ');
+      var ref = rows.filter(function (r) { return r.isRef; })[0];
+      if (ref) reference = moneyRange(ref.valueLow, ref.valueHigh) + ' 元 · 指數 ' + ratioRange(ref);
+    }
+
     busy(true);
     WRBridge.call('logEvaluation', {
       name: state.draft.name || '試算組合',
       price: ev.price, value: ev.value, ratio: ev.ratio,
-      verdict: ev.tier.label, contents: contents
+      verdict: ev.tier.label, contents: contents,
+      methods: methods, reference: reference
     }).then(function () { toast('已存進試算紀錄'); }).catch(failed).then(function () { busy(false); });
   }
 
@@ -1385,16 +1604,19 @@
         if (it.effectiveObs !== null && it.effectiveObs < it.occurrences * 0.5 && it.occurrences >= 3) {
           pullText = ' · 有效觀測僅 ' + it.effectiveObs.toFixed(1) + ' 次（跟別的物品綁在一起）' + pullText;
         }
+        // 行情參考價直接印在同一列，填的時候不用再回去翻自己的筆記；
+        // 它本身不會被送進引擎，所以只當提示，不當預設值。
+        var refText = WR_CATALOG.hasRef(it.id) ? ' · 行情參考 ' + WR_CATALOG.formatRef(it.id) : '';
         lockList.appendChild(h('div', { class: 'lock-row' },
           h('div', { class: 'lock-info' },
             h('div', { class: 'lock-name', text: it.label }),
             h('div', { class: 'lock-est', text: '解出 ' + dPrice(it.id, it.price) + ' ' + dUnit(it.id) +
-              ' · 出現 ' + it.occurrences + ' 包' + pullText })),
+              refText + ' · 出現 ' + it.occurrences + ' 包' + pullText })),
           h('input', {
             class: 'lock-input', type: 'number', step: 'any', min: '0',
             'data-locked': given ? 'true' : 'false',
             'aria-label': it.label + ' 參考單價',
-            placeholder: '未填',
+            placeholder: WR_CATALOG.hasRef(it.id) ? WR_CATALOG.formatRef(it.id) : '未填',
             value: given ? state.priors[it.id] : '',
             onchange: function (e) { setPrior(it.id, e.target.value); },
             oninput: function (e) { e.target.setAttribute('data-locked', e.target.value === '' ? 'false' : 'true'); }
@@ -1410,6 +1632,10 @@
       h('div', { class: 'section-note', style: 'color:var(--accent-ink)', text:
         '這不是鎖定 —— 它只相當於「一筆禮包」的份量。資料一旦足以自己定住某個物品，' +
         '那一項的參考值就會自動退場，之後完全由資料決定。填錯了也會被資料修正。' }),
+      h('div', { class: 'section-note', style: 'color:var(--ref-ink)', text:
+        '每一列後面那個「行情參考」是另一回事：那是寫在物品目錄裡的市場行情，' +
+        '完全不參與計算，只在看板與試算頁多開一欄給你對照。想讓某個數字真的影響推算，' +
+        '才要把它填進右邊這一格。' }),
       lockList));
 
     var s = state.settings;

@@ -164,3 +164,66 @@ test('空字串與非數值一律當成 0，不會寫出 NaN 數量', () => {
     assert.strictEqual(WR_CATALOG.fromInputValue('ag', bad), 0, `輸入 ${bad} 應為 0`);
   }
 });
+
+/* ==========================================================================
+   行情參考價
+   ========================================================================== */
+
+/**
+ * 行情參考價是使用者自己給的市場行情，單位跟 per 相同。
+ * 這一組是他實際報的數字，寫成測試是因為它們會被印在看板與試算表上 ——
+ * 打錯一個小數點不會讓任何東西壞掉，只會安靜地誤導人。
+ */
+test('行情參考價就是使用者給的那組數字', () => {
+  const expected = {
+    ag: [0.85, 1],        // 每 1M
+    au: [1.6, 2],         // 每 1K
+    pt: [8.4, 10],        // 每 100
+    key: [4.8, 4.8],      // 每 1K
+    cell: [7.7, 7.7],     // 每 1K
+    module: [1.2, 1.2],   // 每 10
+    chip: [2, 2],         // 每 10
+    pilotchip: [1, 1.5],  // 每 100
+    uptoken: [99, 99]     // 每 1 個
+  };
+  for (const [id, [low, high]] of Object.entries(expected)) {
+    const ref = WR_CATALOG.refOf(id);
+    assert.ok(ref, `${id} 應該要有行情參考價`);
+    assert.strictEqual(ref.low, low, `${id} 下限`);
+    assert.strictEqual(ref.high, high, `${id} 上限`);
+  }
+  // 展開一次：vm context 裡造出來的陣列跟這裡的 Array 不是同一個原型。
+  assert.deepStrictEqual([...WR_CATALOG.refItems()], Object.keys(expected));
+});
+
+/** 資料卡的價值取決於開出什麼，沒有公定行情，所以刻意留空。 */
+test('資料卡沒有行情參考價', () => {
+  for (const id of ['dc_basic_ag', 'dc_titan', 'dc_ultimate', 'misc']) {
+    assert.strictEqual(WR_CATALOG.refOf(id), null, `${id} 不該有行情參考價`);
+    assert.strictEqual(WR_CATALOG.hasRef(id), false);
+  }
+});
+
+/**
+ * refOf 回的是「計價單位」的數字（給畫面看），refUnitOf 回的是「每 1 單位」
+ * 的原始單價（給引擎那條軸看）。兩者混用的話，看板上那條行情參考虛線
+ * 會畫在差了六個數量級的位置，而且畫面上看起來只是「有點怪」。
+ */
+test('行情參考價的兩種單位彼此對得起來', () => {
+  for (const id of WR_CATALOG.refItems()) {
+    const shown = WR_CATALOG.refOf(id);
+    const raw = WR_CATALOG.refUnitOf(id);
+    assert.ok(Math.abs(WR_CATALOG.toDisplayPrice(id, raw.low) - shown.low) < 1e-12, `${id} 下限`);
+    assert.ok(Math.abs(WR_CATALOG.toDisplayPrice(id, raw.high) - shown.high) < 1e-12, `${id} 上限`);
+    assert.strictEqual(raw.single, shown.single);
+  }
+});
+
+/** 單一值寫成一個數字，區間才寫破折號；而且不補零（4.8 不是 4.80）。 */
+test('行情參考價的寫法：單值不畫區間，也不補零', () => {
+  assert.strictEqual(WR_CATALOG.formatRef('key'), '4.8');
+  assert.strictEqual(WR_CATALOG.formatRef('uptoken'), '99');
+  assert.strictEqual(WR_CATALOG.formatRef('ag'), '0.85 – 1');
+  assert.strictEqual(WR_CATALOG.formatRef('pt'), '8.4 – 10');
+  assert.strictEqual(WR_CATALOG.formatRef('dc_titan'), '');
+});

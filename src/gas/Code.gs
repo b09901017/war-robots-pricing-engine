@@ -89,8 +89,16 @@ function tokenOk(token) {
 
 var SHEETS = { bundles: '禮包', board: '單價看板', settings: '設定', evaluations: '試算紀錄' };
 var BUNDLE_FIXED = ['ID', '名稱', '售價(TWD)', '日期', '啟用'];
-var BOARD_HEADERS = ['物品', '計價單位', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '參考單價'];
-var EVAL_HEADERS = ['時間', '名稱', '售價(TWD)', '理論價值', '性價比指數', '評價', '內容'];
+/**
+ * 「參考單價」與「行情參考價」是兩件不同的事，欄位也刻意分開：
+ *
+ *   參考單價      你填的，會當成正則化的錨點**參與推算**（份量約等於一筆禮包）。
+ *   行情參考(低/高) 寫在物品目錄裡的市場行情，**完全不參與推算**，只是對照欄。
+ *
+ * 兩欄混成一欄的話，想「只是記一下行情」的人會在不知情的情況下改到推算結果。
+ */
+var BOARD_HEADERS = ['物品', '計價單位', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '參考單價', '行情參考(低)', '行情參考(高)'];
+var EVAL_HEADERS = ['時間', '名稱', '售價(TWD)', '理論價值', '性價比指數', '評價', '內容', '四種算法', '行情參考'];
 
 function spreadsheet() {
   var id = String(CONFIG.SHEET_ID || '').trim();
@@ -470,6 +478,11 @@ function writeBoard(items) {
     put(row, idx, '總數量', it.totalQty);
     put(row, idx, '價值占比', it.share);
     put(row, idx, '參考單價', Object.prototype.hasOwnProperty.call(priors, it.id) ? priors[it.id] : '');
+    // 行情參考價的單位跟「計價單位」那一欄相同，所以整列可以橫著讀：
+    // 基準單價、區間、行情參考全部是同一把尺上的數字。
+    var ref = WR_CATALOG.refOf(it.id);
+    put(row, idx, '行情參考(低)', ref ? ref.low : '');
+    put(row, idx, '行情參考(高)', ref ? ref.high : '');
     rows.push(row);
   }
   if (rows.length) {
@@ -481,16 +494,28 @@ function writeBoard(items) {
   return rows.length;
 }
 
+/**
+ * 一筆試算紀錄。
+ *
+ * 照標題找欄位而不是照順序硬塞 —— ensureHeaders 補新欄位時是接在最後面，
+ * 但使用者也可能自己搬過欄位順序，照順序寫會把資料填到錯的欄位裡，
+ * 而且從結果完全看不出哪裡錯了。
+ */
 function appendEvaluation(record) {
   var sh = sheet(SHEETS.evaluations);
   ensureHeaders(sh, EVAL_HEADERS);
-  sh.appendRow([
-    new Date(),
-    record.name || '',
-    Number(record.price) || 0,
-    Number(record.value) || 0,
-    Number(record.ratio) || 0,
-    record.verdict || '',
-    record.contents || ''
-  ]);
+  var idx = headerIndex(sh);
+  var width = sh.getLastColumn();
+  var row = new Array(width);
+  for (var i = 0; i < width; i++) row[i] = '';
+  put(row, idx, '時間', new Date());
+  put(row, idx, '名稱', record.name || '');
+  put(row, idx, '售價(TWD)', Number(record.price) || 0);
+  put(row, idx, '理論價值', Number(record.value) || 0);
+  put(row, idx, '性價比指數', Number(record.ratio) || 0);
+  put(row, idx, '評價', record.verdict || '');
+  put(row, idx, '內容', record.contents || '');
+  put(row, idx, '四種算法', record.methods || '');
+  put(row, idx, '行情參考', record.reference || '');
+  sh.appendRow(row);
 }

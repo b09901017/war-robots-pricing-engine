@@ -22,6 +22,7 @@ var WR_COMPARE = (function () {
       key: 'ls',
       label: '最小平方',
       short: '最小平方',
+      tip: '一視同仁',
       blurb: '所有禮包一視同仁。一筆打錯的資料或一次超級促銷會被平方放大，整張看板都會被它拉走。',
       options: function () { return { method: 'ls' }; }
     },
@@ -29,6 +30,7 @@ var WR_COMPARE = (function () {
       key: 'robust',
       label: '穩健回歸',
       short: '穩健',
+      tip: '離群自動降權',
       blurb: '偏離典型誤差太遠的禮包自動降權。促銷包仍然完整記著，但不會再把行情拉歪。',
       options: function () { return { method: 'robust' }; }
     },
@@ -36,6 +38,7 @@ var WR_COMPARE = (function () {
       key: 'prior',
       label: '參考值優先',
       short: '參考值',
+      tip: '照你填的參考單價',
       blurb: '把你填的參考單價當成定值，其餘物品再由資料補齊。等於問「照我自己的價目表，這包值多少」。',
       needsPriors: true,
       options: function () {
@@ -47,6 +50,7 @@ var WR_COMPARE = (function () {
       key: 'bayes',
       label: '完整貝氏',
       short: '貝氏',
+      tip: '區間最誠實',
       blurb: '點估計跟最小平方差不多，差別在區間：資料分不出來的物品，它就會誠實地給出很寬的區間。',
       options: function () { return { method: 'bayes' }; }
     }
@@ -70,6 +74,7 @@ var WR_COMPARE = (function () {
         key: v.key,
         label: v.label,
         short: v.short,
+        tip: v.tip,
         blurb: v.blurb,
         model: WR_SOLVER.solve(bundles, merge(base, v.options()))
       });
@@ -86,9 +91,72 @@ var WR_COMPARE = (function () {
         key: v.key,
         label: v.label,
         short: v.short,
+        tip: v.tip,
         blurb: v.blurb,
         model: v.model,
         ev: WR_EVAL.evaluate(candidate, v.model)
+      });
+    }
+    return out;
+  }
+
+  /**
+   * 行情參考那一欄的說明文字。它不是第五種算法 —— 那一欄的數字沒有經過
+   * 任何求解，所以刻意跟四種算法分開存放，畫面上也該畫出分隔線。
+   */
+  var REFERENCE = {
+    key: 'ref',
+    label: '行情參考',
+    short: '參考',
+    tip: '你自己給的市價',
+    blurb: '用物品目錄裡的行情參考價直接乘出來的，完全沒有經過推算。它不參與任何計算，' +
+      '只是多給你一把尺：四種算法的結論跟你自己的價目表對不對得上。'
+  };
+
+  /**
+   * 並排表格要畫的每一列：四種算法 + 行情參考。
+   *
+   * 兩個畫面（禮包編輯器與試算頁）都用這一份，欄位的意義與順序才不會各寫一套。
+   * 每一列都同時給「預估價錢」與「性價比」—— 只看性價比會漏掉一件事：
+   * 兩種算法可以給出一樣的指數，卻是用完全不同的價值估出來的。
+   *
+   * @param {Object} candidate  { qty, price }
+   * @param {Array}  variants   build() 的輸出
+   * @param {Object} refModel   行情參考欄用來填補「沒有參考價的物品」的模型
+   */
+  function rows(candidate, variants, refModel) {
+    var out = [];
+    var list = verdicts(candidate, variants || []);
+    for (var i = 0; i < list.length; i++) {
+      var v = list[i];
+      out.push({
+        key: v.key, label: v.label, short: v.short, tip: v.tip, blurb: v.blurb,
+        isRef: false,
+        value: v.ev.value,
+        valueLow: null,
+        valueHigh: null,
+        ratio: v.ev.ratio,
+        ratioLow: v.ev.ratioLow,
+        ratioHigh: v.ev.ratioHigh,
+        tier: v.ev.tier,
+        ev: v.ev
+      });
+    }
+
+    var ref = WR_EVAL.reference(candidate, refModel || (variants && variants.length ? variants[0].model : null));
+    if (ref) {
+      out.push({
+        key: REFERENCE.key, label: REFERENCE.label, short: REFERENCE.short,
+        tip: REFERENCE.tip, blurb: REFERENCE.blurb,
+        isRef: true,
+        value: ref.value,
+        valueLow: ref.valueLow,
+        valueHigh: ref.valueHigh,
+        ratio: ref.ratio,
+        ratioLow: ref.ratioLow,
+        ratioHigh: ref.ratioHigh,
+        tier: ref.tier,
+        ref: ref
       });
     }
     return out;
@@ -170,8 +238,10 @@ var WR_COMPARE = (function () {
 
   return {
     VARIANTS: VARIANTS,
+    REFERENCE: REFERENCE,
     build: build,
     verdicts: verdicts,
+    rows: rows,
     consensus: consensus
   };
 })();
