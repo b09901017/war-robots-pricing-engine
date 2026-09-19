@@ -86,6 +86,8 @@ var WR_SOLVER = (function () {
      * 不是真的比較差的選項，兩筆都該留著當觀測。
      */
     dominateMargin: 0.02,
+    /** 每單位價格超過同物品中位數的幾倍就視為可疑（很可能是打錯）。 */
+    outlierRatio: 1.5,
 
     /**
      * 參考值的份量，單位是「相當於幾次觀測」。拉力正好是 份量/(觀測次數+份量)。
@@ -203,6 +205,7 @@ var WR_SOLVER = (function () {
       draws = { itemIds: solveIds, values: boot, source: 'bootstrap' };
     }
 
+    var suspects = unitPriceOutliers(bundles, opt.outlierRatio);
     var diagnostics = fitQuality(rows, prices, main.rowWeights, excluded, solveIds.length);
     var items = describeItems(solveIds, prices, interval, stats, priors, retired, dataOnly, hasPriors, effObs);
 
@@ -238,6 +241,15 @@ var WR_SOLVER = (function () {
         code: 'dominated',
         text: '有 ' + excluded.length + ' 筆單品禮包被更便宜的同物品單品壓過，沒有納入計算（紀錄仍然留著）。' +
           '基準單價因此代表「你買得到的最好價格」，不是平均行情。'
+      });
+    }
+
+    if (suspects.length) {
+      warnings.push({
+        level: 'warn',
+        code: 'suspect-entry',
+        text: '有 ' + suspects.length + ' 筆單品禮包的每單位價格明顯高於同物品的其他筆，' +
+          '比較可能是輸入或辨識打錯了。到「禮包」分頁看一下就知道。'
       });
     }
 
@@ -285,6 +297,7 @@ var WR_SOLVER = (function () {
       bundleCount: rows.length,
       excludedCount: excluded.length,
       excluded: excluded,
+      suspects: suspects,
       downweighted: downweighted,
       solvedCount: solveIds.length,
       priorCount: countPriors(activePriors, solveIds),
@@ -349,6 +362,67 @@ var WR_SOLVER = (function () {
       });
     }
     return { rows: kept, excluded: excluded };
+  }
+
+  /**
+   * 資料健檢：找出「同一物品的單品包裡，每單位價格明顯不合群」的那幾筆。
+   *
+   * 跟單品支配是兩件事。支配規則問的是「哪個最便宜」，這裡問的是
+   * 「哪一筆離大家太遠，遠到比較可能是打錯而不是真的行情」。
+   *
+   * 為什麼這個檢查特別有用：資料主要來自 AI 看截圖辨識，最常見的錯就是
+   * 數量少看一位。而同一種資料卡不論幾張一包，每張的價格其實非常一致
+   * （實測武器銀卡八筆裡有六筆剛好都是 6.60 元），所以一筆 14.14 元
+   * 幾乎不可能是真的 —— 何況同一批資料裡就有一筆同價位的正確版本。
+   *
+   * 用中位數當基準，不用平均：平均會被離群值自己拉高，然後它就不離群了。
+   */
+  function unitPriceOutliers(bundles, ratio) {
+    if (!(ratio > 1)) ratio = 1.5;
+    var groups = {};
+    var i;
+    for (i = 0; i < bundles.length; i++) {
+      var bd = bundles[i];
+      if (bd.enabled === false) continue;
+      var price = Number(bd.price);
+      if (!isFinite(price) || price <= 0) continue;
+      var qty = normalizeQty(bd.qty);
+      var only = onlyItem(qty);
+      if (!only) continue;
+      (groups[only] = groups[only] || []).push({
+        id: bd.id, name: bd.name, qty: qty[only], price: price, unitPrice: price / qty[only]
+      });
+    }
+
+    var out = [];
+    for (var itemId in groups) {
+      if (!Object.prototype.hasOwnProperty.call(groups, itemId)) continue;
+      var list = groups[itemId];
+      // 少於三筆就沒有「大家」可言，兩筆不一致無從判斷誰才是對的。
+      if (list.length < 3) continue;
+      var units = [];
+      for (i = 0; i < list.length; i++) units.push(list[i].unitPrice);
+      var med = WR_LINALG.median(units);
+      if (!(med > 0)) continue;
+      for (i = 0; i < list.length; i++) {
+        var r = list[i].unitPrice / med;
+        if (r <= ratio) continue;
+        out.push({
+          id: list[i].id,
+          name: list[i].name,
+          itemId: itemId,
+          itemLabel: WR_CATALOG.labelOf(itemId),
+          qty: list[i].qty,
+          price: list[i].price,
+          unitPrice: list[i].unitPrice,
+          median: med,
+          ratio: r,
+          samples: list.length
+        });
+      }
+    }
+    out.sort(function (a, b) { return b.ratio - a.ratio; });
+    return out;
   }
 
   /** 內容物剛好一種時回傳那個物品 id，否則 null。 */
@@ -1213,6 +1287,7 @@ var WR_SOLVER = (function () {
     leverages: leverages,
     rowDiagnostics: rowDiagnostics,
     dominatedSingles: dominatedSingles,
+    unitPriceOutliers: unitPriceOutliers,
     fitQuality: fitQuality,
     predictPrice: predictPrice,
     confidenceOf: confidenceOf

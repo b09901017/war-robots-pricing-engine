@@ -244,3 +244,50 @@ test('反矩陣乘回原矩陣是單位矩陣', () => {
     }
   }
 });
+
+/* ---------- 資料健檢：抓可能打錯的那幾筆 ---------- */
+
+test('每單位價格遠高於同物品其他筆的，會被標成可疑', () => {
+  // 武器銀卡每張穩定在 6.6 元，其中一筆卻是 14.14 —— 同一批資料裡還有
+  // 一筆同樣賣 99 元但寫 15 張的，所以「7 張」幾乎確定是數量少看了一位。
+  const model = WR_SOLVER.solve([
+    { id: 'a', name: '武器銀 5', price: 33, qty: { dc_weapon_ag: 5 } },
+    { id: 'b', name: '武器銀 10', price: 66, qty: { dc_weapon_ag: 10 } },
+    { id: 'c', name: '武器銀 15', price: 99, qty: { dc_weapon_ag: 15 } },
+    { id: 'd', name: '武器銀 50', price: 330, qty: { dc_weapon_ag: 50 } },
+    { id: 'e', name: '武器銀 7', price: 99, qty: { dc_weapon_ag: 7 } }
+  ], { bootstrap: false });
+
+  assert.strictEqual(model.suspects.length, 1);
+  assert.strictEqual(model.suspects[0].name, '武器銀 7');
+  assert.ok(model.suspects[0].ratio > 2, `應該是中位數的兩倍以上，實際 ${model.suspects[0].ratio}`);
+  assert.ok(model.warnings.some((w) => w.code === 'suspect-entry'));
+});
+
+test('價格一致的資料不會被誤報', () => {
+  const model = WR_SOLVER.solve([
+    { id: 'a', name: '武器銀 5', price: 33, qty: { dc_weapon_ag: 5 } },
+    { id: 'b', name: '武器銀 10', price: 66, qty: { dc_weapon_ag: 10 } },
+    { id: 'c', name: '武器銀 15', price: 99, qty: { dc_weapon_ag: 15 } },
+    { id: 'd', name: '武器銀 50', price: 330, qty: { dc_weapon_ag: 50 } }
+  ], { bootstrap: false });
+  assert.strictEqual(model.suspects.length, 0);
+});
+
+test('只有兩筆時不做判斷 —— 無從得知誰才是對的', () => {
+  const model = WR_SOLVER.solve([
+    { id: 'a', name: '卡 10', price: 66, qty: { dc_weapon_ag: 10 } },
+    { id: 'b', name: '卡 1', price: 66, qty: { dc_weapon_ag: 1 } }
+  ], { bootstrap: false });
+  assert.strictEqual(model.suspects.length, 0);
+});
+
+test('組合包不參與健檢 —— 它的每單位價格沒有被直接觀測到', () => {
+  const model = WR_SOLVER.solve([
+    { id: 'a', name: '卡 5', price: 33, qty: { dc_weapon_ag: 5 } },
+    { id: 'b', name: '卡 10', price: 66, qty: { dc_weapon_ag: 10 } },
+    { id: 'c', name: '卡 15', price: 99, qty: { dc_weapon_ag: 15 } },
+    { id: 'd', name: '卡 1 + 電池', price: 500, qty: { dc_weapon_ag: 1, cell: 100 } }
+  ], { bootstrap: false });
+  assert.strictEqual(model.suspects.length, 0);
+});

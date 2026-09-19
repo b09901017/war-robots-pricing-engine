@@ -588,6 +588,17 @@
       })));
     }
 
+    // 資料健檢：每單位價格明顯高於同物品其他筆 —— 最可能的原因是數量少看一位。
+    var suspect = state.model && state.model.suspects
+      ? state.model.suspects.filter(function (s) { return s.id === b.id; })[0] : null;
+    if (suspect) {
+      card.appendChild(h('div', { class: 'bundle-foot' },
+        h('span', { class: 'pill conf-none' }, h('span', { class: 'ico', svg: ICON.alert }), '可能打錯了'),
+        h('span', { text: dUnit(suspect.itemId).replace('元 / ', '每') + ' ' +
+          dPrice(suspect.itemId, suspect.unitPrice) + ' 元，但你記過的同物品是 ' +
+          dPrice(suspect.itemId, suspect.median) + ' 元（' + suspect.samples + ' 筆）' })));
+    }
+
     if (pred && pred.excluded) {
       // 被更便宜的同物品單品壓過 —— 紀錄留著，但不拿來決定基準單價。
       card.appendChild(h('div', { class: 'bundle-foot' },
