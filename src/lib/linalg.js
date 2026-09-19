@@ -248,6 +248,24 @@ var WR_LINALG = (function () {
     return x;
   }
 
+  /**
+   * 對稱正定矩陣反矩陣的對角線元素。
+   * 用途是算「有效觀測次數」：1/(G⁻¹)_jj。欄位彼此正交時它就等於 G_jj，
+   * 也就是該物品被觀測到的次數；一旦與別的欄位共線就會大幅下降。
+   * 逐欄解 G z = e_j 取第 j 項即可，k 最多二十幾，成本可以忽略。
+   */
+  function inverseDiagonal(G) {
+    var k = G.length;
+    var out = new Array(k);
+    for (var j = 0; j < k; j++) {
+      var e = zeros(k);
+      e[j] = 1;
+      var z = solveSPD(G, e);
+      out[j] = z ? z[j] : Infinity;
+    }
+    return out;
+  }
+
   /** mulberry32：小而夠用的可重現亂數，讓每次重算的區間估計不會亂跳。 */
   function rng(seed) {
     var a = seed >>> 0;
@@ -278,6 +296,7 @@ var WR_LINALG = (function () {
     solveLU: solveLU,
     solveSPD: solveSPD,
     lstsqSubset: lstsqSubset,
+    inverseDiagonal: inverseDiagonal,
     nnls: nnls,
     rng: rng,
     percentile: percentile

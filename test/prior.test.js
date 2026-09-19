@@ -34,7 +34,7 @@ test('沒有參考值時，共線的組合值仍然守得住', () => {
 });
 
 test('參考值只在共線時介入分攤，組合值不受影響', () => {
-  const m = WR_SOLVER.solve(collinear(6), { bootstrap: false, priors: { au: 0.019 } });
+  const m = WR_SOLVER.solve(collinear(6), { bootstrap: false, priors: { au: 0.019 }, retirePriors: false });
   assert.ok(m.prices.au > 0 && m.prices.ag > 0, '兩者都不該被壓成 0');
   const combined = m.prices.au + 1000 * m.prices.ag;
   assert.ok(Math.abs(combined - 0.024) / 0.024 < 0.05, `組合值跑掉了：${combined}`);
@@ -56,7 +56,7 @@ test('參考值的拉力等於 份量/(觀測次數+份量)，隨筆數遞減', 
   let prev = Infinity;
   for (const n of [2, 4, 8, 16, 32]) {
     const m = WR_SOLVER.solve(soloBundles(n, truth), {
-      bootstrap: false, priors: { au: prior }, priorWeight: weight
+      bootstrap: false, priors: { au: prior }, priorWeight: weight, retirePriors: false
     });
     const expected = truth.au + (weight / (n + weight)) * (prior - truth.au);
     const err = Math.abs(m.prices.au - expected) / expected;
@@ -125,7 +125,7 @@ test('完全不給參考值時，乾淨的資料應該幾乎完美還原', () =>
 });
 
 test('會回報參考值把答案拉動了多少', () => {
-  const m = WR_SOLVER.solve(collinear(6), { bootstrap: false, priors: { ag: 0.000022 } });
+  const m = WR_SOLVER.solve(collinear(6), { bootstrap: false, priors: { ag: 0.000022 }, retirePriors: false });
   const ag = m.items.find((it) => it.id === 'ag');
   assert.strictEqual(ag.prior, 0.000022);
   assert.ok(ag.dataOnlyPrice !== null, '要同時算出不用參考值的版本');
@@ -154,4 +154,85 @@ test('參考值不破壞非負性與擬合品質', () => {
 test('參考值為 0 或負數視為沒給', () => {
   const m = WR_SOLVER.solve(collinear(6), { bootstrap: false, priors: { au: 0, ag: -1 } });
   assert.strictEqual(m.priorCount, 0);
+});
+
+/* ---------- 自動退場 ---------- */
+
+test('資料本身已能給高信心時，參考值自動退場', () => {
+  const truth = { au: 0.02 };
+  const prior = 0.2;   // 錯 10 倍
+
+  // 金幣單獨出現且筆數充足 → 資料自己就夠，參考值該退場
+  const plenty = WR_SOLVER.solve(soloBundles(12, truth), { priors: { au: prior }, samples: 120 });
+  const au = plenty.items.find((it) => it.id === 'au');
+  assert.strictEqual(au.priorRetired, true, '資料充足時應該退場');
+  assert.strictEqual(au.priorPull, 0, '退場後影響必須是 0，不是「很小」');
+  assert.ok(Math.abs(plenty.prices.au - truth.au) / truth.au < 0.02,
+    `退場後應該等於純資料解，實際 ${plenty.prices.au}`);
+  assert.strictEqual(plenty.priorCount, 0);
+  assert.strictEqual(plenty.priorRetiredCount, 1);
+
+  // 只有兩筆 → 資料不足，參考值仍應生效
+  const scarce = WR_SOLVER.solve(soloBundles(2, truth), { priors: { au: prior }, samples: 120 });
+  const au2 = scarce.items.find((it) => it.id === 'au');
+  assert.strictEqual(au2.priorRetired, false, '資料不足時不該退場');
+  assert.ok(au2.priorPull > 0, '應該還有影響');
+});
+
+/**
+ * 這是換掉「出現包數」判準的原因：共線不會因為筆數變多而消失。
+ * 金幣與銀幣就算記了 30 包、只要每包都綁在一起，資料仍然分不出誰值多少。
+ */
+test('共線的物品不論累積幾包都不會讓參考值退場', () => {
+  const m = WR_SOLVER.solve(collinear(30), { priors: { au: 0.019 }, samples: 120 });
+  const au = m.items.find((it) => it.id === 'au');
+  assert.strictEqual(au.priorRetired, false,
+    '共線物品即使 30 包也不該退場 —— 退了就會退回沒道理的「往 0 拉」');
+  assert.ok(m.priorCount >= 1, '參考值應該仍在生效');
+});
+
+test('退場後的結果與從未給過參考值完全一致', () => {
+  const truth = { au: 0.02, pt: 0.001 };
+  const specs = [];
+  for (let i = 0; i < 14; i++) specs.push({ au: 1000 + i * 300, pt: i % 2 ? 20000 + i * 900 : 0 });
+  const bundles = makeBundles(truth, specs);
+
+  const withRetired = WR_SOLVER.solve(bundles, { bootstrap: false, priors: { au: 0.2 } });
+  const never = WR_SOLVER.solve(bundles, { bootstrap: false });
+  assert.strictEqual(withRetired.prices.au, never.prices.au,
+    '退場後應該與沒給參考值完全相同');
+});
+
+test('可以關掉自動退場', () => {
+  const m = WR_SOLVER.solve(soloBundles(12, { au: 0.02 }), {
+    priors: { au: 0.2 }, samples: 120, retirePriors: false
+  });
+  const au = m.items.find((it) => it.id === 'au');
+  assert.strictEqual(au.priorRetired, false);
+  assert.ok(au.priorPull > 0, '關掉退場後參考值應該仍有影響');
+});
+
+/* ---------- 有效觀測次數 ---------- */
+
+test('共線的物品，有效觀測次數遠低於出現包數', () => {
+  const m = WR_SOLVER.solve(collinear(30), { bootstrap: false });
+  for (const it of m.items) {
+    assert.strictEqual(it.occurrences, 30);
+    assert.ok(it.effectiveObs < 1,
+      `${it.label} 出現 30 包但完全共線，有效觀測應該接近 0，實際 ${it.effectiveObs}`);
+  }
+});
+
+test('彼此獨立的物品，有效觀測次數約等於出現包數', () => {
+  const m = WR_SOLVER.solve(soloBundles(12, { au: 0.02 }), { bootstrap: false });
+  const au = m.items.find((it) => it.id === 'au');
+  assert.ok(Math.abs(au.effectiveObs - 12) < 0.5,
+    `獨立出現 12 包，有效觀測應該接近 12，實際 ${au.effectiveObs}`);
+});
+
+test('有效觀測次數不需要 bootstrap 也算得出來', () => {
+  const m = WR_SOLVER.solve(collinear(10), { bootstrap: false });
+  for (const it of m.items) {
+    assert.ok(it.effectiveObs !== null && isFinite(it.effectiveObs));
+  }
 });

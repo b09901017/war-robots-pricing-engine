@@ -32,6 +32,22 @@ var WR_SOLVER = (function () {
      * 而且會透過物品之間的相關性波及到沒給參考值的物品。所以份量給到「一筆」就好。
      */
     priorWeight: 1,
+    /**
+     * 參考值是否在資料足夠後自動退場。
+     *
+     * 份量公式 份量/(次數+份量) 本身就會隨筆數遞減，但永遠不會真的歸零，
+     * 而參考值在資料已足夠的地方是純粹的偏差來源，還會透過物品之間的
+     * 相關性波及到沒給參考值的物品。所以夠了就乾脆整個拿掉。
+     *
+     * 判準是「有效觀測次數」而不是「出現過幾包」。共線不會因為筆數變多而消失：
+     * 金幣與銀幣就算記了 30 包、只要每包都綁在一起，資料仍然分不出誰值多少。
+     *
+     * 也不能用 bootstrap 區間來判斷 —— 共線時每次重抽都收斂到同一個最小範數解，
+     * 區間反而很窄，但那個穩定是假的，它只是穩定在一個任意的答案上。
+     */
+    retirePriors: true,
+    /** 有效觀測次數達到這個數字，參考值就退場。 */
+    retireAt: 4,
     /** 純粹避免矩陣退化的最小正則化。共線時決定「平手就選比較小的」，其餘情況影響可以忽略。 */
     ridgeFloor: 0.01,
     relativeWeighting: true,
@@ -64,29 +80,53 @@ var WR_SOLVER = (function () {
     var target = [];
     for (i = 0; i < rows.length; i++) target.push(rows[i].price);
 
-    var point = fit(rows, solveIds, target, opt, priors);
+    // 有效觀測次數：物品彼此正交時就等於出現包數，一旦共線就大幅下降。
+    // 這是判斷「資料到底有沒有定住這個物品」唯一可靠的訊號。
+    var effObs = effectiveObservations(rows, solveIds, opt);
+
+    /*
+     * 有參考值時先解一次「完全不看參考值」的版本，它有兩個用途：
+     *   1. 判斷哪些物品光靠資料就已經夠了 —— 那些的參考值直接退場
+     *   2. 拿來跟最終結果比對，算出參考值實際把答案拉動了多少
+     * 只有在真的填了參考值時才會多跑這一輪。
+     */
+    var givenPriors = countPriors(priors, solveIds) > 0;
+    var dataOnly = {};
+    var retired = {};
+    var activePriors = {};
+
+    if (givenPriors) {
+      var bare = fit(rows, solveIds, target, opt, null);
+      for (i = 0; i < solveIds.length; i++) dataOnly[solveIds[i]] = bare[i];
+
+      for (i = 0; i < solveIds.length; i++) {
+        var pid = solveIds[i];
+        var pv = Number(priors[pid]);
+        if (!(isFinite(pv) && pv > 0)) continue;
+        if (opt.retirePriors && effObs[solveIds.indexOf(pid)] >= opt.retireAt) {
+          retired[pid] = true;
+        } else {
+          activePriors[pid] = pv;
+        }
+      }
+    }
+
+    var point = fit(rows, solveIds, target, opt, activePriors);
     var prices = {};
     for (i = 0; i < solveIds.length; i++) prices[solveIds[i]] = point[i];
 
-    // 同一批資料再解一次、但完全不理會參考值。兩者的差距就是「參考值影響了多少」，
-    // 讓使用者看得出結論是資料撐起來的，還是只是自己的猜測被原樣印回來。
-    var hasPriors = countPriors(priors, solveIds) > 0;
-    var dataOnly = {};
-    if (hasPriors) {
-      var bare = fit(rows, solveIds, target, opt, null);
-      for (i = 0; i < solveIds.length; i++) dataOnly[solveIds[i]] = bare[i];
-    }
+    var hasPriors = countPriors(activePriors, solveIds) > 0;
 
     var interval = null;
     var draws = null;
     if (opt.bootstrap && rows.length >= 3 && solveIds.length > 0) {
-      var boot = bootstrap(rows, solveIds, priors, opt, point);
+      var boot = bootstrap(rows, solveIds, activePriors, opt, point);
       interval = boot.interval;
       draws = { itemIds: solveIds, values: boot.values };
     }
 
     var diagnostics = fitQuality(rows, prices);
-    var items = describeItems(solveIds, prices, interval, stats, priors, dataOnly, hasPriors);
+    var items = describeItems(solveIds, prices, interval, stats, priors, retired, dataOnly, hasPriors, effObs);
 
     if (rows.length === 0) {
       warnings.push({ level: 'info', code: 'no-data', text: '還沒有任何禮包資料，先新增幾筆再回來看單價。' });
@@ -117,7 +157,8 @@ var WR_SOLVER = (function () {
     return {
       bundleCount: rows.length,
       solvedCount: solveIds.length,
-      priorCount: countPriors(priors, solveIds),
+      priorCount: countPriors(activePriors, solveIds),
+      priorRetiredCount: Object.keys(retired).length,
       items: items,
       prices: prices,
       fit: diagnostics,
@@ -270,6 +311,55 @@ var WR_SOLVER = (function () {
     return { interval: interval, values: values };
   }
 
+  /**
+   * 每個物品的「有效觀測次數」。
+   *
+   * 縮放後正規方程式的對角線 G_jj 正好等於該物品出現過的次數，但那只在欄位
+   * 彼此正交時才代表真正的資訊量。取 1/(G⁻¹)_jj 才會把共線扣掉：某物品若總是
+   * 跟別的物品綁在一起賣，出現三十次的有效觀測可能還不到一次。
+   */
+  function effectiveObservations(rows, itemIds, opt) {
+    var m = rows.length;
+    var n = itemIds.length;
+    if (m === 0 || n === 0) return [];
+
+    var meanPrice = 0;
+    for (var i = 0; i < m; i++) meanPrice += rows[i].price;
+    meanPrice = meanPrice / m;
+
+    var A = new Array(m);
+    for (i = 0; i < m; i++) {
+      var w = opt.relativeWeighting ? 1 / rows[i].price : 1 / meanPrice;
+      var row = new Array(n);
+      for (var j = 0; j < n; j++) row[j] = (rows[i].qty[itemIds[j]] || 0) * w;
+      A[i] = row;
+    }
+    for (j = 0; j < n; j++) {
+      var sq = 0, k = 0;
+      for (i = 0; i < m; i++) if (A[i][j] !== 0) { sq += A[i][j] * A[i][j]; k++; }
+      var scale = k > 0 ? Math.sqrt(sq / k) : 0;
+      if (scale > 0) for (i = 0; i < m; i++) A[i][j] /= scale;
+    }
+
+    var G = new Array(n);
+    for (i = 0; i < n; i++) G[i] = WR_LINALG.zeros(n);
+    for (var r = 0; r < m; r++) {
+      for (i = 0; i < n; i++) {
+        if (A[r][i] === 0) continue;
+        for (j = i; j < n; j++) G[i][j] += A[r][i] * A[r][j];
+      }
+    }
+    for (i = 0; i < n; i++) {
+      G[i][i] += opt.ridgeFloor;
+      for (j = i + 1; j < n; j++) G[j][i] = G[i][j];
+    }
+
+    var diag = WR_LINALG.inverseDiagonal(G);
+    var out = new Array(n);
+    for (j = 0; j < n; j++) out[j] = diag[j] > 0 ? 1 / diag[j] : 0;
+    return out;
+  }
+
   function itemStats(rows) {
     var occurrences = {};
     var totalQty = {};
@@ -290,7 +380,7 @@ var WR_SOLVER = (function () {
     return { occurrences: occurrences, totalQty: totalQty, present: present };
   }
 
-  function describeItems(present, prices, interval, stats, priors, dataOnly, hasPriors) {
+  function describeItems(present, prices, interval, stats, priors, retired, dataOnly, hasPriors, effObs) {
     var out = [];
     var grandTotal = 0;
     var contribution = {};
@@ -306,13 +396,14 @@ var WR_SOLVER = (function () {
       var price = prices[id];
       var prior = Number(priors[id]);
       var hasPrior = isFinite(prior) && prior > 0;
+      var isRetired = hasPrior && retired[id] === true;
       var occ = stats.occurrences[id] || 0;
       var relWidth = null;
       if (band && price > 0) relWidth = (band.high - band.low) / price;
 
       // 參考值把答案拉動了多少。接近 0 代表結論是資料自己撐起來的。
       var pull = null;
-      if (hasPriors && hasPrior && dataOnly[id] !== undefined) {
+      if (hasPriors && hasPrior && !isRetired && dataOnly[id] !== undefined) {
         var base = Math.max(price, dataOnly[id]);
         pull = base > 0 ? Math.abs(price - dataOnly[id]) / base : 0;
       }
@@ -322,12 +413,14 @@ var WR_SOLVER = (function () {
         group: (WR_CATALOG.get(id) || {}).group || 'other',
         price: price,
         prior: hasPrior ? prior : null,
+        priorRetired: isRetired,
         dataOnlyPrice: hasPriors && dataOnly[id] !== undefined ? dataOnly[id] : null,
-        priorPull: pull,
+        priorPull: isRetired ? 0 : pull,
         low: band ? band.low : null,
         high: band ? band.high : null,
         relativeWidth: relWidth,
         occurrences: occ,
+        effectiveObs: effObs && effObs[i] !== undefined ? effObs[i] : null,
         totalQty: stats.totalQty[id] || 0,
         share: grandTotal > 0 ? contribution[id] / grandTotal : 0,
         confidence: confidenceOf(occ, relWidth, price)

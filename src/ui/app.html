@@ -271,10 +271,20 @@
 
     // 每列只留兩件事：資料多不多、區間多寬。
     // 原本還塞了總數量與占比色條，四項擠在一起反而什麼都讀不進去。
+    // 有效觀測遠低於出現包數 = 這個物品總是跟別的東西綁在一起，
+    // 記再多包也分不出來。這是「為什麼我記了 30 包還是不準」唯一的解釋。
+    var thin = it.effectiveObs !== null && it.occurrences >= 3 && it.effectiveObs < it.occurrences * 0.5;
     row.appendChild(h('div', { class: 'price-row-meta' },
       h('span', { text: '出現在 ' + it.occurrences + ' 包' }),
+      thin ? h('span', { style: 'color:var(--serious-ink)',
+        text: '但有效觀測只有 ' + it.effectiveObs.toFixed(1) + ' 次' }) : null,
       hasBand ? h('span', { text: dPrice(it.id, it.low) + ' – ' + dPrice(it.id, it.high) }) : null
     ));
+
+    if (thin) {
+      row.appendChild(note('它幾乎總是跟別的物品一起出現，方程式分不出各自的價值。' +
+        '記一包「只含它」或搭配組合不同的禮包，這個數字才會真的被定住。'));
+    }
 
     if (it.price === 0) {
       row.appendChild(note('解為 0 —— 這個物品總是跟別的東西綁在一起出現，資料還分不出它自己的價值。'));
@@ -973,10 +983,15 @@
       }).forEach(function (it) {
         var given = Object.prototype.hasOwnProperty.call(state.priors, it.id);
         var pullText = '';
-        if (it.priorPull !== null) {
+        if (it.priorRetired) {
+          pullText = ' · 已自動退場，完全由資料決定';
+        } else if (it.priorPull !== null) {
           pullText = it.priorPull > 0.1
             ? ' · 目前把結果拉動了 ' + pct(it.priorPull)
             : ' · 幾乎沒影響，資料已經夠了';
+        }
+        if (it.effectiveObs !== null && it.effectiveObs < it.occurrences * 0.5 && it.occurrences >= 3) {
+          pullText = ' · 有效觀測僅 ' + it.effectiveObs.toFixed(1) + ' 次（跟別的物品綁在一起）' + pullText;
         }
         lockList.appendChild(h('div', { class: 'lock-row' },
           h('div', { class: 'lock-info' },
@@ -1001,8 +1016,8 @@
         '有些物品在每一包裡都綁在一起賣，數學上分不出誰值多少。填個大概的數字，' +
         '引擎在這種分不出來的情況下就會往你的猜測靠。' }),
       h('div', { class: 'section-note', style: 'color:var(--accent-ink)', text:
-        '這不是鎖定 —— 它只相當於「一筆禮包」的份量，禮包記得越多，你的猜測就越沒有影響力，' +
-        '最後完全由資料決定。填錯了也會被資料自己修正。' }),
+        '這不是鎖定 —— 它只相當於「一筆禮包」的份量。資料一旦足以自己定住某個物品，' +
+        '那一項的參考值就會自動退場，之後完全由資料決定。填錯了也會被資料修正。' }),
       lockList));
 
     // 推算參數
