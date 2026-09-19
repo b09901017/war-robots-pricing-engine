@@ -248,6 +248,21 @@ var WR_LINALG = (function () {
     return x;
   }
 
+  /** 對稱正定矩陣的完整反矩陣。規模只有十幾二十，逐欄解就夠快了。 */
+  function inverseSPD(G) {
+    var k = G.length;
+    var inv = new Array(k);
+    for (var i = 0; i < k; i++) inv[i] = zeros(k);
+    for (var j = 0; j < k; j++) {
+      var e = zeros(k);
+      e[j] = 1;
+      var z = solveSPD(G, e);
+      if (!z) return null;
+      for (i = 0; i < k; i++) inv[i][j] = z[i];
+    }
+    return inv;
+  }
+
   /**
    * 對稱正定矩陣反矩陣的對角線元素。
    * 用途是算「有效觀測次數」：1/(G⁻¹)_jj。欄位彼此正交時它就等於 G_jj，
@@ -264,6 +279,72 @@ var WR_LINALG = (function () {
       out[j] = z ? z[j] : Infinity;
     }
     return out;
+  }
+
+  /**
+   * 標準常態亂數（Box–Muller）。一次算兩個，把第二個留著下次用。
+   * 吃的是外面傳進來的 rand，所以整條鏈仍然是可重現的。
+   */
+  function normal(rand) {
+    var u = 1 - rand();          // (0, 1]，避開 log(0)
+    var v = rand();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  /**
+   * Gamma(shape, 1) 亂數（Marsaglia–Tsang）。只支援 shape >= 1 —— 我們唯一的
+   * 用途是抽 σ² 的倒 Gamma，shape = (筆數 + 物品數)/2，一定遠大於 1。
+   */
+  function gamma(shape, rand) {
+    if (!(shape >= 1)) shape = 1;
+    var d = shape - 1 / 3;
+    var c = 1 / Math.sqrt(9 * d);
+    for (var guard = 0; guard < 500; guard++) {
+      var x, v;
+      do {
+        x = normal(rand);
+        v = 1 + c * x;
+      } while (v <= 0);
+      v = v * v * v;
+      var u = rand();
+      if (u < 1 - 0.0331 * x * x * x * x) return d * v;
+      if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+    }
+    return d;  // 理論上到不了；真的到了就回期望值，別卡住。
+  }
+
+  /**
+   * 從截在 [0, ∞) 的常態分布抽樣。
+   *
+   * 單價不可能為負，所以後驗其實是「截斷多元常態」。μ 落在 0 附近或右邊時，
+   * 直接抽再丟掉負的就夠有效率；μ 深入負值時接受率會趨近 0，改用 Robert (1995)
+   * 的指數提議分布，那邊的接受率不隨 μ 惡化。
+   */
+  function truncatedNormalPositive(mu, sd, rand) {
+    if (!(sd > 0)) return Math.max(0, mu);
+    var a = -mu / sd;                     // 標準化之後的下界
+    if (a < 0.45) {
+      for (var i = 0; i < 60; i++) {
+        var z = normal(rand);
+        if (z >= a) return mu + sd * z;
+      }
+      return Math.max(0, mu);
+    }
+    var alpha = (a + Math.sqrt(a * a + 4)) / 2;
+    for (var k = 0; k < 500; k++) {
+      var e = a - Math.log(1 - rand()) / alpha;
+      var rho = Math.exp(-(e - alpha) * (e - alpha) / 2);
+      if (rand() <= rho) return mu + sd * e;
+    }
+    return mu + sd * a;
+  }
+
+  /** 中位數。會就地排序傳進來的陣列副本，不動到原始資料。 */
+  function median(values) {
+    var a = values.slice().sort(function (x, y) { return x - y; });
+    var n = a.length;
+    if (n === 0) return NaN;
+    return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
   }
 
   /** mulberry32：小而夠用的可重現亂數，讓每次重算的區間估計不會亂跳。 */
@@ -297,8 +378,13 @@ var WR_LINALG = (function () {
     solveSPD: solveSPD,
     lstsqSubset: lstsqSubset,
     inverseDiagonal: inverseDiagonal,
+    inverseSPD: inverseSPD,
     nnls: nnls,
     rng: rng,
+    normal: normal,
+    gamma: gamma,
+    truncatedNormalPositive: truncatedNormalPositive,
+    median: median,
     percentile: percentile
   };
 })();

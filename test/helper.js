@@ -11,7 +11,7 @@ const vm = require('vm');
 function loadLibs() {
   const dir = path.join(__dirname, '..', 'src', 'lib');
   const ctx = vm.createContext({ console, Math, Date, JSON, isFinite, Number, Object, Array, String });
-  for (const file of ['catalog.js', 'linalg.js', 'solver.js', 'evaluate.js', 'sample.js', 'importer.js', 'prompt.js']) {
+  for (const file of ['catalog.js', 'linalg.js', 'solver.js', 'evaluate.js', 'compare.js', 'sample.js', 'importer.js', 'prompt.js']) {
     vm.runInContext(fs.readFileSync(path.join(dir, file), 'utf8'), ctx, { filename: file });
   }
   return ctx;

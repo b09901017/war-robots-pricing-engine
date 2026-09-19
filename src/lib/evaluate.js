@@ -93,10 +93,19 @@ var WR_EVAL = (function () {
     };
   }
 
-  /** 正常行情的半寬：跟著模型的平均絕對百分誤差走，夾在 6% ~ 25% 之間。 */
+  /**
+   * 正常行情的半寬：跟著模型的平均絕對百分誤差走，夾在 6% ~ 25% 之間。
+   *
+   * 但自由度不足時（待解物品數逼近禮包筆數），擬合誤差會趨近 0 —— 那是因為
+   * 解必定完美通過每一個點，不是因為模型準。這時候拿它當「正常行情」的寬度，
+   * 會把任何一點點偏差都判成超值或偏貴。所以誤差還不算數的時候，
+   * 寬度改用保守的 15%。
+   */
   function normalBand(model) {
-    var mape = model && model.fit ? model.fit.mape : null;
+    var fit = model && model.fit;
+    var mape = fit ? fit.mape : null;
     if (mape === null || mape === undefined || !isFinite(mape)) return 0.12;
+    if (fit && fit.meaningful === false) return Math.max(0.15, Math.min(0.25, mape));
     return Math.max(0.06, Math.min(0.25, mape));
   }
 
