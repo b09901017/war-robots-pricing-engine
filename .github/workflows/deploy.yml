@@ -23,10 +23,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
+      # 用 npm test 而不是直接寫 node --test 'test/*.test.js'：
+      # 加了引號等於要 node 自己展開萬用字元，那是 Node 22 才有的行為，
+      # 舊版會把整串當成真實檔名去找然後失敗。交給 shell 展開就沒有版本問題。
       - name: 跑演算法測試
-        run: node --test 'test/*.test.js'
+        run: npm test
 
       - name: 建置網站
         run: node tools/build.js
@@ -42,5 +45,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # enablement: true 會順便幫這個 repo 打開 Pages，
+      # 省掉手動去 Settings → Pages 設定的步驟。
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - id: deployment
         uses: actions/deploy-pages@v4
