@@ -2,8 +2,8 @@
  * 物品目錄：定義《War Robots》商城禮包內可能出現的所有物品。
  *
  * 這份檔案同時被三個執行環境載入，所以必須是「無相依、無模組系統」的純 JS：
- *   1. Apps Script 伺服器端（複製成 lib_catalog.gs）
- *   2. 瀏覽器前端（包成 <script> 塞進 HTML）
+ *   1. Apps Script（建置時接在 Code.gs 前面，試算表的欄位標題從這裡來）
+ *   2. 瀏覽器前端（建置時包進 index.html）
  *   3. node 測試（用 vm 在同一個 context 裡依序執行）
  */
 var WR_CATALOG = (function () {

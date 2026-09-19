@@ -3,11 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="War Robots 商城禮包比價：從歷史禮包反解各物品的基準單價，再判斷新禮包值不值得買。">
+  <meta name="theme-color" content="#0b0e13" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f2f4f7" media="(prefers-color-scheme: light)">
   <title>War Robots 禮包比價</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><text y='16' font-size='16'>📊</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Noto+Sans+TC:wght@500;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
-  <?!= include('ui/styles') ?>
+  <!--include:styles-->
 </head>
 <body>
 
@@ -19,8 +23,8 @@
       <div class="brand-name">禮包比價</div>
     </div>
     <nav class="rail-nav" id="railNav" aria-label="主要導覽"></nav>
-    <div style="margin-top:auto;">
-      <a id="sheetLink" class="btn btn-sm btn-ghost btn-block" href="#" target="_blank" rel="noopener" hidden>開啟試算表</a>
+    <div style="margin-top:auto; display:flex; flex-direction:column; gap:8px;">
+      <div id="railConn"></div>
     </div>
   </aside>
 
@@ -61,6 +65,20 @@
   <div class="sheet-foot" id="editorFoot"></div>
 </section>
 
+<!-- 連接試算表 -->
+<section class="sheet" id="connectSheet" role="dialog" aria-modal="true" aria-labelledby="connectTitle" aria-hidden="true">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="connectTitle">連接試算表</div>
+      <div class="sheet-sub">貼上 Apps Script 的網址和你設定的密碼</div>
+    </div>
+    <button class="btn btn-sm btn-ghost" id="connectClose">關閉</button>
+  </div>
+  <div class="sheet-body" id="connectBody"></div>
+  <div class="sheet-foot" id="connectFoot"></div>
+</section>
+
 <!-- 數字鍵盤 -->
 <section class="sheet" id="padSheet" role="dialog" aria-modal="true" aria-labelledby="padTitle" aria-hidden="true">
   <div class="sheet-grip"></div>
@@ -82,13 +100,13 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<?!= include('ui/js_catalog') ?>
-<?!= include('ui/js_linalg') ?>
-<?!= include('ui/js_solver') ?>
-<?!= include('ui/js_evaluate') ?>
-<?!= include('ui/js_sample') ?>
-<?!= include('ui/bridge') ?>
-<?!= include('ui/app') ?>
+<!--include:lib:catalog-->
+<!--include:lib:linalg-->
+<!--include:lib:solver-->
+<!--include:lib:evaluate-->
+<!--include:lib:sample-->
+<!--include:bridge-->
+<!--include:app-->
 
 </body>
 </html>

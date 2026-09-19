@@ -83,6 +83,7 @@
     locks: {},
     model: null,
     spreadsheetUrl: '',
+    spreadsheetName: '',
     editor: null,
     draft: { name: '', price: null, qty: {} },
     busy: false
@@ -164,8 +165,20 @@
       onclick: toggleTheme
     }, h('span', { svg: ICON.theme })));
 
-    var link = $('sheetLink');
-    if (link && state.spreadsheetUrl) { link.href = state.spreadsheetUrl; link.hidden = false; }
+    var rail = $('railConn');
+    if (rail) {
+      clear(rail);
+      var connected = WRBridge.mode() === 'sheet';
+      rail.appendChild(h('div', { class: 'pill ' + (connected ? 'conf-high' : 'conf-none'), style: 'width:100%; justify-content:flex-start' },
+        h('span', { class: 'dot' }),
+        connected ? '已連接試算表' : '資料存在這台裝置'));
+      if (connected && state.spreadsheetUrl) {
+        rail.appendChild(h('a', {
+          class: 'btn btn-sm btn-ghost btn-block', style: 'margin-top:6px',
+          href: state.spreadsheetUrl, target: '_blank', rel: 'noopener'
+        }, '開啟試算表'));
+      }
+    }
   }
 
   /* ====================================================================
@@ -566,7 +579,7 @@
 
     closeSheet('editorSheet');
     busy(true);
-    WRBridge.call('apiSaveBundle', {
+    WRBridge.call('saveBundle', {
       id: d.id, name: d.name, price: d.price, qty: d.qty, note: d.note, enabled: d.enabled
     }).then(function (res) {
       state.bundles = res.bundles;
@@ -580,7 +593,7 @@
     if (!window.confirm('確定要刪除「' + (bundle.name || '未命名禮包') + '」嗎？')) return;
     closeSheet('editorSheet');
     busy(true);
-    WRBridge.call('apiDeleteBundle', bundle.id).then(function (res) {
+    WRBridge.call('deleteBundle', bundle.id).then(function (res) {
       state.bundles = res.bundles;
       recompute();
       render();
@@ -743,7 +756,7 @@
       return WR_CATALOG.labelOf(c.id) + ' ' + group(c.qty);
     }).join('、');
     busy(true);
-    WRBridge.call('apiLogEvaluation', {
+    WRBridge.call('logEvaluation', {
       name: state.draft.name || '試算組合',
       price: ev.price, value: ev.value, ratio: ev.ratio,
       verdict: ev.tier.label, contents: contents
@@ -758,6 +771,11 @@
     var root = $('viewSettings');
     clear(root);
     var m = state.model;
+
+    // 還沒有資料的時候，「資料要存在哪」才是第一件該決定的事；
+    // 有資料之後，會常用的是鎖定單價，就把它放回最上面。
+    var firstRun = !state.bundles.length;
+    if (firstRun) root.appendChild(dataSection());
 
     // 鎖定基準單價
     var lockList = h('div', { class: 'card' });
@@ -817,17 +835,103 @@
             onchange: function (e) { s.interval = Number(e.target.value) || 0.8; recompute(); render(); persistSettings(); } }))
       )));
 
-    // 資料
-    root.appendChild(h('section', { class: 'section' },
-      h('div', { class: 'section-title', text: '試算表' }),
-      h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:9px' },
-        h('button', { class: 'btn btn-block', onclick: syncBoard }, h('span', { svg: ICON.sync }), '把單價看板寫回試算表'),
-        h('button', { class: 'btn btn-block', onclick: loadSample }, '載入範例禮包'),
-        state.spreadsheetUrl
-          ? h('a', { class: 'btn btn-block', href: state.spreadsheetUrl, target: '_blank', rel: 'noopener' }, '開啟試算表')
-          : null,
-        h('div', { class: 'section-note', text: '禮包資料本來就存在試算表的「禮包」工作表裡，你也可以直接在試算表上編輯，回來重整就會讀到。' })
-      )));
+    if (!firstRun) root.appendChild(dataSection());
+  }
+
+  /** 資料存在哪裡，以及跟試算表之間的各種動作。 */
+  function dataSection() {
+    var connected = WRBridge.mode() === 'sheet';
+    var card = h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:11px' });
+
+    card.appendChild(h('div', { style: 'display:flex; align-items:center; gap:9px; flex-wrap:wrap' },
+      h('span', { class: 'pill ' + (connected ? 'conf-high' : 'conf-none') },
+        h('span', { class: 'dot' }), connected ? '已連接試算表' : '本機模式'),
+      h('span', { class: 'section-note', text: connected
+        ? (state.spreadsheetName || '資料存在你的 Google 試算表，手機電腦都同步。')
+        : '資料存在這台裝置的瀏覽器裡，換一台裝置就看不到。' })));
+
+    if (connected) {
+      card.appendChild(h('button', { class: 'btn btn-block', onclick: syncBoard },
+        h('span', { svg: ICON.sync }), '把單價看板寫回試算表'));
+      if (state.spreadsheetUrl) {
+        card.appendChild(h('a', { class: 'btn btn-block', href: state.spreadsheetUrl, target: '_blank', rel: 'noopener' },
+          '開啟試算表'));
+      }
+      var stray = WRBridge.localBundles();
+      if (stray.length) {
+        card.appendChild(h('button', { class: 'btn btn-block', onclick: function () { uploadLocal(stray); } },
+          '把這台裝置上的 ' + stray.length + ' 筆舊資料上傳'));
+      }
+      card.appendChild(h('button', { class: 'btn btn-block btn-ghost', onclick: function () {
+        if (!window.confirm('中斷連線後會切回本機模式。試算表上的資料不會被刪除。')) return;
+        WRBridge.disconnect();
+        reload();
+      } }, '中斷連線'));
+    } else {
+      card.appendChild(h('button', { class: 'btn btn-primary btn-block', onclick: openConnect },
+        h('span', { svg: ICON.sync }), '連接 Google 試算表'));
+      card.appendChild(h('div', { class: 'section-note',
+        text: '連上之後資料會改存在試算表，手機和電腦就會同步，也能直接在試算表上編輯。設定方式見專案的 README。' }));
+    }
+
+    card.appendChild(h('button', { class: 'btn btn-block btn-ghost', onclick: loadSample }, '載入範例禮包'));
+
+    return h('section', { class: 'section' },
+      h('div', { class: 'section-title', text: '資料存放' }), card);
+  }
+
+  /* ====================================================================
+     連接試算表
+     ==================================================================== */
+
+  function openConnect() {
+    var conn = WRBridge.connection() || { url: '', token: '' };
+    var body = $('connectBody');
+    clear(body);
+
+    body.appendChild(h('div', { class: 'notice' },
+      h('span', { class: 'ico', svg: ICON.alert }),
+      h('span', { text: '還沒設定過的話，請先照 README 把 Code.gs 貼進 Apps Script、填好密碼與試算表 ID，然後部署成網頁應用程式（「誰可以存取」要選「所有人」）。' })));
+
+    body.appendChild(h('div', { class: 'field' },
+      h('label', { class: 'field-label', text: 'Apps Script 網址', for: 'connUrl' }),
+      h('input', { class: 'field-input', id: 'connUrl', type: 'url', inputmode: 'url',
+        placeholder: 'https://script.google.com/macros/s/.../exec', value: conn.url })));
+
+    body.appendChild(h('div', { class: 'field' },
+      h('label', { class: 'field-label', text: '密碼', for: 'connToken' }),
+      h('input', { class: 'field-input', id: 'connToken', type: 'password',
+        placeholder: '你在 Code.gs 裡設定的那一組', value: conn.token })));
+
+    body.appendChild(h('div', { class: 'section-note', id: 'connStatus',
+      text: '密碼只會存在這台裝置的瀏覽器裡，不會上傳到任何地方。' }));
+
+    var foot = $('connectFoot');
+    clear(foot);
+    foot.appendChild(h('button', { class: 'btn btn-primary btn-block', id: 'connGo', onclick: doConnect },
+      h('span', { svg: ICON.check }), '測試並連接'));
+
+    openSheet('connectSheet');
+  }
+
+  function doConnect() {
+    var url = $('connUrl').value;
+    var token = $('connToken').value;
+    var status = $('connStatus');
+    var btn = $('connGo');
+    btn.disabled = true;
+    status.textContent = '連線中…';
+    status.style.color = '';
+
+    WRBridge.connect(url, token).then(function (data) {
+      status.textContent = '連上了：' + (data.sheet || '試算表');
+      closeSheet('connectSheet');
+      toast('已連接試算表');
+      reload();
+    }).catch(function (err) {
+      status.textContent = err.message;
+      status.style.color = 'var(--critical-ink)';
+    }).then(function () { btn.disabled = false; });
   }
 
   function settingRow(name, desc, control, extra) {
@@ -847,32 +951,47 @@
     }
     recompute();
     renderTopbar();
-    WRBridge.call('apiSaveLocks', state.locks).catch(failed);
+    WRBridge.call('saveLocks', state.locks).catch(failed);
   }
 
   var settingsTimer = null;
   function persistSettings() {
     if (settingsTimer) clearTimeout(settingsTimer);
     settingsTimer = setTimeout(function () {
-      WRBridge.call('apiSaveSettings', state.settings).catch(failed);
+      WRBridge.call('saveSettings', state.settings).catch(failed);
     }, 700);
   }
 
   function syncBoard() {
     if (!state.model || !state.model.items.length) { toast('還沒有可以寫入的單價'); return; }
     busy(true);
-    WRBridge.call('apiSyncBoard', state.model.items).then(function (res) {
+    WRBridge.call('syncBoard', state.model.items).then(function (res) {
       toast('已寫入 ' + res.written + ' 列到「單價看板」');
     }).catch(failed).then(function () { busy(false); });
   }
 
   function loadSample() {
     busy(true);
-    WRBridge.call('apiLoadSample').then(function (res) {
+    WRBridge.call('saveBundles', WR_SAMPLE.bundles()).then(function (res) {
       state.bundles = res.bundles;
       recompute();
       render();
       toast('已載入範例資料');
+    }).catch(failed).then(function () { busy(false); });
+  }
+
+  /** 從本機模式切過去之後，把瀏覽器裡累積的資料整批搬上試算表。 */
+  function uploadLocal(bundles) {
+    if (!bundles.length) { toast('本機沒有資料可以上傳'); return; }
+    if (!window.confirm('要把這台裝置上的 ' + bundles.length + ' 筆禮包加到試算表嗎？')) return;
+    busy(true);
+    WRBridge.call('saveBundles', bundles.map(function (b) {
+      return { name: b.name, price: b.price, qty: b.qty, date: b.date, enabled: b.enabled, note: b.note };
+    })).then(function (res) {
+      state.bundles = res.bundles;
+      recompute();
+      render();
+      toast('已上傳 ' + bundles.length + ' 筆');
     }).catch(failed).then(function () { busy(false); });
   }
 
@@ -1039,25 +1158,16 @@
     }
   }
 
-  function boot() {
-    try {
-      var saved = localStorage.getItem('wr-theme');
-      if (saved) document.documentElement.setAttribute('data-theme', saved);
-    } catch (e) { /* 忽略 */ }
-
-    buildPad();
-    $('editorClose').addEventListener('click', function () { closeSheet('editorSheet'); });
-    $('scrim').addEventListener('click', function () {
-      if (openSheets.length) closeSheet(openSheets[openSheets.length - 1]);
-    });
-
-    render();
-
-    WRBridge.call('apiBootstrap').then(function (data) {
+  /** 從目前連著的資料來源重新讀一次。切換本機／試算表之後也走這裡。 */
+  function reload() {
+    state.ready = false;
+    renderTopbar();
+    return WRBridge.call('load').then(function (data) {
       state.bundles = data.bundles || [];
       state.settings = data.settings || state.settings;
       state.locks = data.locks || {};
       state.spreadsheetUrl = data.spreadsheetUrl || '';
+      state.spreadsheetName = data.spreadsheetName || '';
       state.ready = true;
       recompute();
       render();
@@ -1066,6 +1176,23 @@
       failed(err);
       render();
     });
+  }
+
+  function boot() {
+    try {
+      var saved = localStorage.getItem('wr-theme');
+      if (saved) document.documentElement.setAttribute('data-theme', saved);
+    } catch (e) { /* 忽略 */ }
+
+    buildPad();
+    $('editorClose').addEventListener('click', function () { closeSheet('editorSheet'); });
+    $('connectClose').addEventListener('click', function () { closeSheet('connectSheet'); });
+    $('scrim').addEventListener('click', function () {
+      if (openSheets.length) closeSheet(openSheets[openSheets.length - 1]);
+    });
+
+    render();
+    reload();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

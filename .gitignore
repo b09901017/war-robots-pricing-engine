@@ -1,11 +1,10 @@
 node_modules/
-dist/
-dist-preview/
 
-# clasp 的 .clasp.json 內含你個人的 scriptId，不要進版控。
-# 複製 .clasp.json.example 成 .clasp.json 後填入自己的 scriptId。
-.clasp.json
-.clasprc.json
+# 網站的建置產物由 GitHub Actions 自己產生，不進版控。
+dist-web/
+
+# dist-gas/Code.gs 是刻意進版控的 ——
+# 它就是你要複製貼進 Apps Script 的那個檔案，必須能在 GitHub 上打開來複製。
 
 .DS_Store
 *.log

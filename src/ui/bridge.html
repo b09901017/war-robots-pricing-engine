@@ -1,34 +1,196 @@
 <script>
 /**
- * 前端與 Apps Script 之間的橋。
+ * 資料層。網站有兩種模式：
  *
- * 正式環境走 google.script.run（callback 風格），這裡包成 Promise。
- * 本機預覽時 google 不存在，改走 window.WR_MOCK —— 同一份介面程式碼
- * 因此可以在瀏覽器裡直接開來看，不必每改一行就 push 上去。
+ *   local —— 資料存在這台裝置的瀏覽器裡。不用設定任何東西，打開就能用，
+ *            但換一台裝置就看不到。
+ *   sheet —— 資料存在你的 Google 試算表。需要先貼上 Apps Script 網址與密碼，
+ *            之後手機電腦都同步。
+ *
+ * 兩種模式對上層是同一組 API，所以介面程式完全不必知道現在連的是誰。
  */
 var WRBridge = (function () {
   'use strict';
 
-  var live = typeof google !== 'undefined' && google.script && google.script.run;
+  var CONN_KEY = 'wr-connection';
+  var DATA_KEY = 'wr-local-data';
 
-  function call(method, payload) {
-    if (!live) {
-      if (!window.WR_MOCK || typeof window.WR_MOCK[method] !== 'function') {
-        return Promise.reject(new Error('預覽模式不支援 ' + method));
-      }
-      return Promise.resolve().then(function () { return window.WR_MOCK[method](payload); });
+  /* ---------- 連線設定 ---------------------------------------------- */
+
+  function connection() {
+    try {
+      var raw = localStorage.getItem(CONN_KEY);
+      if (!raw) return null;
+      var c = JSON.parse(raw);
+      return (c && c.url && c.token) ? c : null;
+    } catch (e) {
+      return null;
     }
-    return new Promise(function (resolve, reject) {
-      var runner = google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(function (err) {
-          reject(new Error(err && err.message ? err.message : String(err)));
-        });
-      if (payload === undefined) runner[method]();
-      else runner[method](payload);
+  }
+
+  function mode() { return connection() ? 'sheet' : 'local'; }
+
+  function saveConnection(url, token) {
+    try {
+      localStorage.setItem(CONN_KEY, JSON.stringify({ url: url, token: token }));
+    } catch (e) {
+      throw new Error('這個瀏覽器不允許儲存資料（無痕模式？），無法記住連線設定。');
+    }
+  }
+
+  function disconnect() {
+    try { localStorage.removeItem(CONN_KEY); } catch (e) { /* 忽略 */ }
+  }
+
+  /** 測試一組網址與密碼能不能用。成功才存起來。 */
+  function connect(url, token) {
+    url = String(url || '').trim();
+    token = String(token || '').trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
+      return Promise.reject(new Error('網址看起來不對。應該長得像 https://script.google.com/macros/s/AKfy…/exec'));
+    }
+    if (!token) return Promise.reject(new Error('請輸入密碼。'));
+    return request(url, token, 'ping', null).then(function (data) {
+      saveConnection(url, token);
+      return data;
     });
   }
 
-  return { call: call, isLive: function () { return !!live; } };
+  /* ---------- 對外的呼叫介面 ---------------------------------------- */
+
+  function call(action, payload) {
+    var conn = connection();
+    if (!conn) return Promise.resolve().then(function () { return LocalStore.handle(action, payload); });
+    return request(conn.url, conn.token, action, payload);
+  }
+
+  /**
+   * Content-Type 刻意用 text/plain。
+   * 送 application/json 會讓瀏覽器先發一個 CORS 預檢請求（OPTIONS），
+   * 而 Apps Script 不處理 OPTIONS，整個請求就會失敗。text/plain 屬於
+   * 「簡單請求」，不觸發預檢，伺服器端再自己 JSON.parse 就好。
+   */
+  function request(url, token, action, payload) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: token, action: action, payload: payload }),
+      redirect: 'follow'
+    }).then(function (res) {
+      if (!res.ok) throw new Error('伺服器回應 ' + res.status + '。請確認部署時「誰可以存取」選的是「所有人」。');
+      return res.text();
+    }).then(function (text) {
+      var body;
+      try {
+        body = JSON.parse(text);
+      } catch (e) {
+        // 通常代表回傳的是 Google 的登入頁，而不是我們的 JSON。
+        throw new Error('收到的不是預期的回應。最常見的原因是部署時「誰可以存取」沒有選「所有人」。');
+      }
+      if (!body.ok) throw new Error(body.error || '未知的錯誤');
+      return body.data;
+    }).catch(function (err) {
+      if (err instanceof TypeError) {
+        throw new Error('連不上 Apps Script。請確認網址正確，而且已經重新部署過。');
+      }
+      throw err;
+    });
+  }
+
+  /* ---------- 本機模式 ---------------------------------------------- */
+
+  var LocalStore = {
+    read: function () {
+      try {
+        var raw = localStorage.getItem(DATA_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch (e) { /* 忽略 */ }
+      return { bundles: [], settings: { ridge: 0.005, relativeWeighting: true, samples: 240, interval: 0.8 }, locks: {} };
+    },
+
+    write: function (store) {
+      try {
+        localStorage.setItem(DATA_KEY, JSON.stringify(store));
+      } catch (e) {
+        throw new Error('瀏覽器空間不足或不允許儲存，這次的變更沒有存下來。');
+      }
+      return store;
+    },
+
+    handle: function (action, payload) {
+      var s = LocalStore.read();
+      switch (action) {
+        case 'ping':
+          return { sheet: '本機', url: '' };
+
+        case 'load':
+          return { bundles: s.bundles, settings: s.settings, locks: s.locks, spreadsheetUrl: '', spreadsheetName: '' };
+
+        case 'saveBundle':
+          var id = payload.id || 'b' + Date.now().toString(36);
+          var next = {
+            id: id, name: payload.name, price: payload.price, qty: payload.qty,
+            date: payload.date || new Date().toISOString().slice(0, 10),
+            enabled: payload.enabled !== false, note: payload.note || ''
+          };
+          var i = -1;
+          for (var k = 0; k < s.bundles.length; k++) if (s.bundles[k].id === id) i = k;
+          if (i >= 0) s.bundles[i] = next; else s.bundles.push(next);
+          LocalStore.write(s);
+          return { bundles: s.bundles };
+
+        case 'saveBundles':
+          for (var j = 0; j < payload.length; j++) {
+            var b = payload[j];
+            s.bundles.push({
+              id: b.id || 'b' + Date.now().toString(36) + j,
+              name: b.name, price: b.price, qty: b.qty,
+              date: b.date || new Date().toISOString().slice(0, 10),
+              enabled: b.enabled !== false, note: b.note || ''
+            });
+          }
+          LocalStore.write(s);
+          return { bundles: s.bundles };
+
+        case 'deleteBundle':
+          s.bundles = s.bundles.filter(function (x) { return x.id !== payload; });
+          LocalStore.write(s);
+          return { bundles: s.bundles };
+
+        case 'saveLocks':
+          s.locks = payload || {};
+          LocalStore.write(s);
+          return {};
+
+        case 'saveSettings':
+          s.settings = payload;
+          LocalStore.write(s);
+          return {};
+
+        case 'syncBoard':
+          throw new Error('本機模式沒有試算表可以寫入。先到設定裡連接試算表。');
+
+        case 'logEvaluation':
+          return {};
+
+        default:
+          throw new Error('不認識的指令：' + action);
+      }
+    }
+  };
+
+  /** 連上試算表之後，本機那份資料還留著 —— 讓使用者可以把它搬上去。 */
+  function localBundles() {
+    return LocalStore.read().bundles || [];
+  }
+
+  return {
+    call: call,
+    mode: mode,
+    connection: connection,
+    connect: connect,
+    disconnect: disconnect,
+    localBundles: localBundles
+  };
 })();
 </script>
