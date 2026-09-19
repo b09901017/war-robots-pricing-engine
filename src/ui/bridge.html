@@ -1,0 +1,34 @@
+<script>
+/**
+ * 前端與 Apps Script 之間的橋。
+ *
+ * 正式環境走 google.script.run（callback 風格），這裡包成 Promise。
+ * 本機預覽時 google 不存在，改走 window.WR_MOCK —— 同一份介面程式碼
+ * 因此可以在瀏覽器裡直接開來看，不必每改一行就 push 上去。
+ */
+var WRBridge = (function () {
+  'use strict';
+
+  var live = typeof google !== 'undefined' && google.script && google.script.run;
+
+  function call(method, payload) {
+    if (!live) {
+      if (!window.WR_MOCK || typeof window.WR_MOCK[method] !== 'function') {
+        return Promise.reject(new Error('預覽模式不支援 ' + method));
+      }
+      return Promise.resolve().then(function () { return window.WR_MOCK[method](payload); });
+    }
+    return new Promise(function (resolve, reject) {
+      var runner = google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(function (err) {
+          reject(new Error(err && err.message ? err.message : String(err)));
+        });
+      if (payload === undefined) runner[method]();
+      else runner[method](payload);
+    });
+  }
+
+  return { call: call, isLive: function () { return !!live; } };
+})();
+</script>

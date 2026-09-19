@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>War Robots 禮包比價</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Noto+Sans+TC:wght@500;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+  <?!= include('ui/styles') ?>
+</head>
+<body>
+
+<div class="app">
+  <!-- 電腦版側欄 -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark">War Robots</div>
+      <div class="brand-name">禮包比價</div>
+    </div>
+    <nav class="rail-nav" id="railNav" aria-label="主要導覽"></nav>
+    <div style="margin-top:auto;">
+      <a id="sheetLink" class="btn btn-sm btn-ghost btn-block" href="#" target="_blank" rel="noopener" hidden>開啟試算表</a>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="viewTitle">單價看板</h1>
+        <div class="topbar-sub" id="viewSub">讀取中…</div>
+      </div>
+      <div class="topbar-actions" id="topActions"></div>
+    </header>
+
+    <main class="view" id="viewBoard"></main>
+    <main class="view" id="viewBundles" hidden></main>
+    <main class="view" id="viewEvaluate" hidden></main>
+    <main class="view" id="viewSettings" hidden></main>
+  </div>
+</div>
+
+<!-- 手機版底部分頁 -->
+<nav class="tabbar" id="tabBar" aria-label="主要導覽"></nav>
+
+<button class="fab" id="fab" hidden></button>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- 禮包編輯器 -->
+<section class="sheet" id="editorSheet" role="dialog" aria-modal="true" aria-labelledby="editorTitle" aria-hidden="true">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="editorTitle">新增禮包</div>
+      <div class="sheet-sub" id="editorSub">點物品丸子加入，數量用鍵盤輸入</div>
+    </div>
+    <button class="btn btn-sm btn-ghost" id="editorClose">關閉</button>
+  </div>
+  <div class="sheet-body" id="editorBody"></div>
+  <div class="sheet-foot" id="editorFoot"></div>
+</section>
+
+<!-- 數字鍵盤 -->
+<section class="sheet" id="padSheet" role="dialog" aria-modal="true" aria-labelledby="padTitle" aria-hidden="true">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <div>
+      <div class="sheet-title" id="padTitle">數量</div>
+      <div class="sheet-sub" id="padSub"></div>
+    </div>
+    <button class="btn btn-sm btn-ghost" id="padClose">取消</button>
+  </div>
+  <div class="keypad-display" id="padDisplay"></div>
+  <div class="keypad-quick" id="padQuick"></div>
+  <div class="keypad-grid" id="padGrid"></div>
+  <div class="sheet-foot">
+    <button class="btn" id="padClear">清除</button>
+    <button class="btn btn-primary" id="padDone">完成</button>
+  </div>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<?!= include('ui/js_catalog') ?>
+<?!= include('ui/js_linalg') ?>
+<?!= include('ui/js_solver') ?>
+<?!= include('ui/js_evaluate') ?>
+<?!= include('ui/js_sample') ?>
+<?!= include('ui/bridge') ?>
+<?!= include('ui/app') ?>
+
+</body>
+</html>

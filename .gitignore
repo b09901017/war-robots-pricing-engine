@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-preview/
+
+# clasp 的 .clasp.json 內含你個人的 scriptId，不要進版控。
+# 複製 .clasp.json.example 成 .clasp.json 後填入自己的 scriptId。
+.clasp.json
+.clasprc.json
+
+.DS_Store
+*.log

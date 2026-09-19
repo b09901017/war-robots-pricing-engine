@@ -1,0 +1,18 @@
+{
+  "name": "war-robots-pricing-engine",
+  "version": "1.0.0",
+  "description": "War Robots 商城禮包比價與基準單價推算引擎（Google Apps Script + Google 試算表）",
+  "private": true,
+  "scripts": {
+    "build": "node tools/build.js",
+    "preview": "node tools/preview.js",
+    "serve": "node tools/preview.js --serve",
+    "test": "node --test test/",
+    "push": "node tools/build.js && clasp push -f",
+    "deploy": "node tools/build.js && clasp push -f && clasp deploy"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  },
+  "license": "MIT"
+}

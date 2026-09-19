@@ -1,0 +1,1074 @@
+<script>
+(function () {
+  'use strict';
+
+  /* ====================================================================
+     小工具
+     ==================================================================== */
+
+  function h(tag, props) {
+    var el = document.createElement(tag);
+    if (props) {
+      for (var k in props) {
+        if (!Object.prototype.hasOwnProperty.call(props, k)) continue;
+        var v = props[k];
+        if (v === null || v === undefined || v === false) continue;
+        if (k === 'class') el.className = v;
+        else if (k === 'text') el.textContent = v;
+        else if (k === 'svg') el.innerHTML = v;          // 只用在本檔定義的圖示常數
+        else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2).toLowerCase(), v);
+        else el.setAttribute(k, v === true ? '' : v);
+      }
+    }
+    for (var i = 2; i < arguments.length; i++) append(el, arguments[i]);
+    return el;
+  }
+
+  function append(parent, child) {
+    if (child === null || child === undefined || child === false) return;
+    if (Array.isArray(child)) {
+      for (var i = 0; i < child.length; i++) append(parent, child[i]);
+    } else if (child instanceof Node) {
+      parent.appendChild(child);
+    } else {
+      parent.appendChild(document.createTextNode(String(child)));
+    }
+  }
+
+  function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+  function $(id) { return document.getElementById(id); }
+
+  var ICON = {
+    board: '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 15V9M7.7 15V4M12.3 15v-4M17 15V7"/></svg>',
+    box: '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10 2.6 17 6.3v7.4L10 17.4 3 13.7V6.3z"/><path d="M3 6.3 10 10l7-3.7M10 10v7.4"/></svg>',
+    calc: '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="2.5" width="13" height="15" rx="2"/><path d="M6.5 6h7M7 10h.01M10 10h.01M13 10h.01M7 13.5h.01M10 13.5h.01M13 13.5h.01"/></svg>',
+    tune: '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 6h6M13 6h4M3 14h4M11 14h6"/><circle cx="11" cy="6" r="2"/><circle cx="9" cy="14" r="2"/></svg>',
+    plus: '<svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 4.5v11M4.5 10h11"/></svg>',
+    close: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></svg>',
+    check: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>',
+    alert: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 3.2 18 16.8H2z"/><path d="M10 8v3.4M10 14.2h.01"/></svg>',
+    minus: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M5 10h10"/></svg>',
+    equal: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M5 7.8h10M5 12.2h10"/></svg>',
+    trash: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h12M8 6V4.5h4V6M6 6l.7 10h6.6L15 6"/></svg>',
+    sync: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 8.5A6.5 6.5 0 0 0 5 5.6V3.5M3.5 11.5A6.5 6.5 0 0 0 15 14.4v2.1"/><path d="M3.3 5.6H5V3.5M16.7 14.4H15v2.1"/></svg>',
+    lock: '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4.5" y="8.5" width="11" height="8" rx="2"/><path d="M7 8.5V6.5a3 3 0 0 1 6 0v2"/></svg>',
+    backspace: '<svg viewBox="0 0 24 20" width="20" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H8L2.5 10z"/><path d="M11.5 7.5l5 5M16.5 7.5l-5 5"/></svg>',
+    theme: '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M16.5 11.4A6.8 6.8 0 0 1 8.6 3.5a6.8 6.8 0 1 0 7.9 7.9z"/></svg>'
+  };
+
+  var SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
+  var OTHER_COLOR = 'var(--s6)';
+
+  var CONF_TEXT = { high: '高信心', mid: '中信心', low: '低信心', none: '無資料', locked: '已鎖定' };
+
+  var fmtQty = WR_CATALOG.formatQty;
+  var fmtPrice = WR_CATALOG.formatUnitPrice;
+  var fmtMoney = WR_CATALOG.formatMoney;
+  var group = WR_CATALOG.groupDigits;
+
+  function pct(v, digits) {
+    if (v === null || v === undefined || !isFinite(v)) return '—';
+    return (v * 100).toFixed(digits === undefined ? 0 : digits) + '%';
+  }
+
+  /* ====================================================================
+     狀態
+     ==================================================================== */
+
+  var state = {
+    ready: false,
+    view: 'board',
+    bundles: [],
+    settings: { ridge: 0.005, relativeWeighting: true, samples: 240, interval: 0.8 },
+    locks: {},
+    model: null,
+    spreadsheetUrl: '',
+    editor: null,
+    draft: { name: '', price: null, qty: {} },
+    busy: false
+  };
+
+  var VIEWS = [
+    { id: 'board', title: '單價看板', icon: ICON.board, label: '看板' },
+    { id: 'bundles', title: '禮包紀錄', icon: ICON.box, label: '禮包' },
+    { id: 'evaluate', title: '性價比試算', icon: ICON.calc, label: '試算' },
+    { id: 'settings', title: '設定與鎖定', icon: ICON.tune, label: '設定' }
+  ];
+
+  /* ====================================================================
+     推算：每次資料變動就在瀏覽器裡重算一次，不需要等伺服器
+     ==================================================================== */
+
+  function recompute() {
+    state.model = WR_SOLVER.solve(state.bundles, {
+      locks: state.locks,
+      ridge: state.settings.ridge,
+      relativeWeighting: state.settings.relativeWeighting,
+      samples: state.settings.samples,
+      interval: state.settings.interval
+    });
+  }
+
+  var recomputeTimer = null;
+  function recomputeSoon() {
+    if (recomputeTimer) clearTimeout(recomputeTimer);
+    recomputeTimer = setTimeout(function () {
+      recomputeTimer = null;
+      recompute();
+      render();
+    }, 320);
+  }
+
+  /* ====================================================================
+     導覽
+     ==================================================================== */
+
+  function go(view) {
+    state.view = view;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  function renderNav() {
+    var rail = $('railNav');
+    var tabs = $('tabBar');
+    clear(rail); clear(tabs);
+    VIEWS.forEach(function (v) {
+      var current = state.view === v.id;
+      rail.appendChild(h('button', {
+        'aria-current': current ? 'page' : null,
+        onclick: function () { go(v.id); }
+      }, h('span', { class: 'ico', svg: v.icon }), v.title));
+      tabs.appendChild(h('button', {
+        'aria-current': current ? 'page' : null,
+        onclick: function () { go(v.id); }
+      }, h('span', { svg: v.icon }), h('span', { text: v.label })));
+    });
+  }
+
+  function renderTopbar() {
+    var v = VIEWS.filter(function (x) { return x.id === state.view; })[0];
+    $('viewTitle').textContent = v.title;
+
+    var m = state.model;
+    var sub;
+    if (!state.ready) sub = '讀取中…';
+    else if (!m || m.bundleCount === 0) sub = '尚無禮包資料';
+    else sub = m.bundleCount + ' 筆禮包 · ' + m.items.length + ' 種物品 · 平均誤差 ' + pct(m.fit.mape, 1);
+    $('viewSub').textContent = sub;
+
+    var actions = $('topActions');
+    clear(actions);
+    actions.appendChild(h('button', {
+      class: 'btn btn-sm btn-ghost', title: '切換深色／淺色', 'aria-label': '切換深色或淺色主題',
+      onclick: toggleTheme
+    }, h('span', { svg: ICON.theme })));
+
+    var link = $('sheetLink');
+    if (link && state.spreadsheetUrl) { link.href = state.spreadsheetUrl; link.hidden = false; }
+  }
+
+  /* ====================================================================
+     單價看板
+     ==================================================================== */
+
+  function renderBoard() {
+    var root = $('viewBoard');
+    clear(root);
+    var m = state.model;
+
+    if (!m || m.bundleCount === 0) {
+      root.appendChild(emptyState(
+        '還沒有任何禮包',
+        '先到「禮包」分頁記幾筆商城的組合包，引擎就會自動解出每種物品的基準單價。',
+        '新增第一筆禮包', function () { go('bundles'); openEditor(null); }
+      ));
+      return;
+    }
+
+    (m.warnings || []).forEach(function (w) {
+      root.appendChild(h('div', { class: 'notice' + (w.level === 'warn' ? ' notice-warn' : '') },
+        h('span', { class: 'ico', svg: ICON.alert }), h('span', { text: w.text })));
+    });
+
+    root.appendChild(h('div', { class: 'stat-row' },
+      stat('禮包樣本', group(m.bundleCount), '筆', m.lockedCount ? m.lockedCount + ' 項單價已鎖定' : '全部由資料解出'),
+      stat('已解物品', group(m.items.length), '種', m.solvedCount + ' 種參與求解'),
+      stat('平均誤差', pct(m.fit.mape, 1), null, '模型回推售價的平均偏離')
+    ));
+
+    var head = h('div', { class: 'section-head' },
+      h('div', { class: 'section-title', text: '基準單價' }),
+      h('button', {
+        class: 'btn btn-sm', onclick: syncBoard
+      }, h('span', { svg: ICON.sync }), '同步到試算表'));
+
+    var board = h('div', { class: 'board' });
+    var groups = WR_CATALOG.groups();
+    groups.forEach(function (g) {
+      var rows = m.items.filter(function (it) { return it.group === g.id; });
+      if (!rows.length) return;
+      board.appendChild(h('div', { class: 'board-group-label', text: g.name }));
+      rows.forEach(function (it) { board.appendChild(priceRow(it)); });
+    });
+
+    root.appendChild(h('section', { class: 'section' }, head,
+      h('div', { class: 'section-note', text: '每個數字是「1 單位這個物品值多少台幣」。淺色橫條是 80% 可能區間，直線是點估計。' }),
+      board));
+
+    root.appendChild(fitSection(m));
+  }
+
+  function stat(label, value, unit, foot) {
+    return h('div', { class: 'stat' },
+      h('div', { class: 'stat-label', text: label }),
+      h('div', { class: 'stat-value' }, value, unit ? h('small', { text: unit }) : null),
+      h('div', { class: 'stat-foot', text: foot })
+    );
+  }
+
+  function priceRow(it) {
+    var row = h('div', { class: 'price-row' });
+
+    row.appendChild(h('div', { class: 'price-row-head' },
+      h('span', { class: 'price-row-name', text: it.label }),
+      h('span', { class: 'pill conf-' + it.confidence },
+        h('span', { class: 'dot' }),
+        it.confidence === 'locked' ? h('span', { svg: ICON.lock }) : null,
+        CONF_TEXT[it.confidence])
+    ));
+
+    row.appendChild(h('div', { class: 'price-row-value num' },
+      fmtPrice(it.price), h('span', { class: 'unit', text: '元/單位' })));
+
+    var hasBand = it.price > 0 && it.low !== null && it.high !== null && it.occurrences >= 2;
+
+    row.appendChild(h('div', { class: 'price-row-meta' },
+      h('span', { text: '出現 ' + it.occurrences + ' 包' }),
+      h('span', { text: '共 ' + fmtQty(it.totalQty) }),
+      hasBand ? h('span', { text: '區間 ' + fmtPrice(it.low) + ' – ' + fmtPrice(it.high) }) : null,
+      h('span', { text: '占總價值 ' + pct(it.share, 1) }),
+      h('span', { class: 'share-bar', 'aria-hidden': 'true' },
+        h('i', { style: 'width:' + Math.max(2, Math.round(it.share * 100)) + '%' }))
+    ));
+
+    if (it.price === 0) {
+      row.appendChild(note('解為 0 —— 這個物品總是跟別的東西綁在一起出現，資料還分不出它自己的價值。'));
+    } else if (it.occurrences < 2) {
+      row.appendChild(note('只出現在 1 包裡，這個數字完全取決於那一包怎麼定價，還不能當成行情。'));
+    } else if (hasBand) {
+      row.appendChild(rangeBar(it));
+    }
+
+    return row;
+  }
+
+  function note(text) {
+    return h('div', { class: 'price-row-meta', style: 'color:var(--serious-ink)' }, h('span', { text: text }));
+  }
+
+  /**
+   * 區間條：橫軸是「相對於這個物品自己的點估計」，從 0 到 2 倍。
+   * 每一列都用自己的尺度，所以條子的寬度就是相對不確定性 —— 銀幣跟終極資料卡
+   * 差了八個數量級也能放在同一個看板上互相比較「有多不確定」。
+   */
+  function rangeBar(it) {
+    var max = it.price * 2;
+    var clamp = function (v) { return Math.max(0, Math.min(1, v / max)); };
+    var lo = clamp(it.low);
+    var hi = clamp(it.high);
+    var overflow = it.high > max;
+
+    var bar = h('div', { class: 'range', role: 'img',
+      'aria-label': it.label + ' 單價 ' + fmtPrice(it.price) + ' 元，可能區間 ' + fmtPrice(it.low) + ' 到 ' + fmtPrice(it.high) + ' 元' },
+      h('div', { class: 'range-track' }),
+      h('div', { class: 'range-band', style: 'left:' + (lo * 100) + '%; width:' + Math.max(1.5, (hi - lo) * 100) + '%' }),
+      h('div', { class: 'range-point', style: 'left:calc(50% - 1.5px)' })
+    );
+    if (overflow) bar.appendChild(h('div', { class: 'range-overflow', text: '▸ ' + fmtPrice(it.high) }));
+    return bar;
+  }
+
+  function fitSection(m) {
+    if (!m.fit.predictions.length) return null;
+    var rows = m.fit.predictions.slice(0, 8);
+    var table = h('table', { class: 'fit-table' },
+      h('thead', null, h('tr', null,
+        h('th', { text: '禮包' }),
+        h('th', { class: 'n', text: '實際售價' }),
+        h('th', { class: 'n', text: '模型估值' }),
+        h('th', { class: 'n', text: '偏離' })
+      )),
+      h('tbody', null, rows.map(function (p) {
+        var off = p.ratio - 1;
+        var tone = Math.abs(off) < 0.1 ? 'var(--ink-3)' : (off > 0 ? 'var(--good-ink)' : 'var(--serious-ink)');
+        return h('tr', null,
+          h('td', { text: p.name || '（未命名）' }),
+          h('td', { class: 'n', text: group(Math.round(p.actual)) }),
+          h('td', { class: 'n', text: fmtMoney(p.predicted) }),
+          h('td', { class: 'n', style: 'color:' + tone, text: (off >= 0 ? '+' : '') + pct(off, 1) })
+        );
+      }))
+    );
+    return h('section', { class: 'section' },
+      h('div', { class: 'section-head' },
+        h('div', { class: 'section-title', text: '擬合診斷' }),
+        h('div', { class: 'section-note', text: 'R² ' + (m.fit.r2 === null ? '—' : m.fit.r2.toFixed(3)) })),
+      h('div', { class: 'section-note', text: '偏離最大的幾包。正值代表模型認為它超值，負值代表它比行情貴。落差特別大的通常是輸入打錯了。' }),
+      h('div', { class: 'card' }, h('div', { class: 'table-wrap' }, table))
+    );
+  }
+
+  /* ====================================================================
+     禮包清單
+     ==================================================================== */
+
+  function renderBundles() {
+    var root = $('viewBundles');
+    clear(root);
+
+    if (!state.bundles.length) {
+      root.appendChild(emptyState(
+        '還沒有禮包紀錄',
+        '把商城裡看到的禮包一筆筆記下來：售價加上內容物。累積越多，單價推算就越準。',
+        '新增禮包', function () { openEditor(null); }
+      ));
+      root.appendChild(h('div', { style: 'display:flex; justify-content:center' },
+        h('button', { class: 'btn btn-ghost btn-sm', onclick: loadSample }, '或先載入範例資料看看')));
+      return;
+    }
+
+    var byId = {};
+    if (state.model) {
+      state.model.fit.predictions.forEach(function (p) { byId[p.id] = p; });
+    }
+
+    var list = h('div', null);
+    state.bundles.slice().sort(function (a, b) {
+      return String(b.date || '').localeCompare(String(a.date || ''));
+    }).forEach(function (b) {
+      list.appendChild(bundleCard(b, byId[b.id]));
+    });
+
+    root.appendChild(h('section', { class: 'section' },
+      h('div', { class: 'section-head' },
+        h('div', { class: 'section-title', text: state.bundles.length + ' 筆紀錄' }),
+        h('div', { class: 'section-note', text: '點任一筆即可編輯' })),
+      list));
+  }
+
+  function bundleCard(b, pred) {
+    var items = Object.keys(b.qty || {});
+    var card = h('div', { class: 'bundle', 'data-disabled': b.enabled === false ? 'true' : 'false', tabindex: '0', role: 'button',
+      onclick: function () { openEditor(b); },
+      onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditor(b); } }
+    });
+
+    card.appendChild(h('div', { class: 'bundle-top' },
+      h('div', null,
+        h('div', { class: 'bundle-name', text: b.name || '（未命名禮包）' }),
+        h('div', { class: 'bundle-date', text: [b.date, b.enabled === false ? '已停用' : null].filter(Boolean).join(' · ') })),
+      h('div', { class: 'bundle-price num' }, h('span', { class: 'cur', text: 'NT$' }), group(Math.round(b.price)))
+    ));
+
+    if (items.length) {
+      card.appendChild(h('div', { class: 'bundle-items' }, items.map(function (id) {
+        return h('span', { class: 'tag' }, WR_CATALOG.labelOf(id), h('b', { text: fmtQty(b.qty[id]) }));
+      })));
+    }
+
+    if (pred) {
+      var off = pred.ratio - 1;
+      var tone = Math.abs(off) < 0.1 ? 'conf-mid' : (off > 0 ? 'conf-high' : 'conf-low');
+      card.appendChild(h('div', { class: 'bundle-foot' },
+        h('span', { class: 'pill ' + tone }, h('span', { class: 'dot' }),
+          '性價比 ' + pred.ratio.toFixed(2)),
+        h('span', { text: '模型估值 ' + fmtMoney(pred.predicted) + ' 元' })));
+    }
+
+    return card;
+  }
+
+  /* ====================================================================
+     組合包編輯器（禮包新增／編輯，以及試算器共用）
+     ==================================================================== */
+
+  /**
+   * 物品用丸子點選，數量與售價用數字鍵盤 —— 整個流程盡量不用打字。
+   * @param {Object} draft {name, price, qty}
+   * @param {Function} onChange 任何欄位變動後呼叫
+   */
+  function composer(draft, onChange, opts) {
+    opts = opts || {};
+    var wrap = h('div', { style: 'display:flex; flex-direction:column; gap:17px' });
+
+    // 售價
+    var priceValue = h('span', { class: 'val', text: draft.price ? group(draft.price) : '0' });
+    wrap.appendChild(h('div', { class: 'field' },
+      h('label', { class: 'field-label', text: '售價' }),
+      h('button', {
+        class: 'field-big',
+        onclick: function () {
+          openPad({
+            title: '售價', sub: '新台幣', unit: 'NT$',
+            value: draft.price, steps: WR_CATALOG.PRICE_STEPS,
+            onDone: function (v) {
+              draft.price = v;
+              priceValue.textContent = v ? group(v) : '0';
+              onChange();
+            }
+          });
+        }
+      },
+        h('span', { class: 'cur', text: 'NT$' }),
+        priceValue,
+        h('span', { class: 'hint', text: '點一下用鍵盤輸入' }))
+    ));
+
+    // 名稱（唯一需要打字的欄位，且可留空）
+    if (!opts.hideName) {
+      wrap.appendChild(h('div', { class: 'field' },
+        h('label', { class: 'field-label', text: '名稱（可留空）', for: 'composerName' }),
+        h('input', {
+          class: 'field-input', id: 'composerName', type: 'text',
+          placeholder: '例如：週末特惠包', value: draft.name || '',
+          oninput: function (e) { draft.name = e.target.value; }
+        })));
+    }
+
+    // 已選物品
+    var slots = h('div', { class: 'card' });
+    wrap.appendChild(h('div', { class: 'field' },
+      h('div', { class: 'field-label', text: '內容物' }),
+      slots));
+
+    // 物品丸子
+    var picker = h('div', null);
+    wrap.appendChild(h('div', { class: 'field' },
+      h('div', { class: 'field-label', text: '加入物品' }),
+      picker));
+
+    function paintSlots() {
+      clear(slots);
+      var ids = WR_CATALOG.IDS.filter(function (id) { return draft.qty[id] > 0; });
+      if (!ids.length) {
+        slots.appendChild(h('div', { class: 'empty', style: 'padding:26px 18px' },
+          h('span', { text: '還沒加入任何物品' }),
+          h('span', { style: 'font-size:12.5px', text: '從下面點物品丸子加進來' })));
+        return;
+      }
+      ids.forEach(function (id) {
+        var item = WR_CATALOG.get(id);
+        var est = state.model && state.model.prices[id];
+        slots.appendChild(h('div', { class: 'slot' },
+          h('div', { style: 'min-width:0' },
+            h('div', { class: 'slot-name', text: WR_CATALOG.labelOf(id) }),
+            est ? h('div', { class: 'slot-sub', text: '基準 ' + fmtPrice(est) + ' 元 · 小計 ' + fmtMoney(draft.qty[id] * est) + ' 元' }) : null),
+          h('button', {
+            class: 'slot-qty num', 'aria-label': WR_CATALOG.labelOf(id) + ' 數量',
+            onclick: function () {
+              openPad({
+                title: WR_CATALOG.labelOf(id), sub: '數量',
+                value: draft.qty[id], steps: item.steps,
+                onDone: function (v) {
+                  if (v > 0) draft.qty[id] = v; else delete draft.qty[id];
+                  paintSlots(); paintPicker(); onChange();
+                }
+              });
+            },
+            text: group(draft.qty[id])
+          }),
+          h('button', {
+            class: 'slot-remove', 'aria-label': '移除 ' + WR_CATALOG.labelOf(id), svg: ICON.close,
+            onclick: function () { delete draft.qty[id]; paintSlots(); paintPicker(); onChange(); }
+          })
+        ));
+      });
+    }
+
+    function paintPicker() {
+      clear(picker);
+      WR_CATALOG.groups().forEach(function (g) {
+        var chips = h('div', { class: 'chips' });
+        g.items.forEach(function (item) {
+          var active = draft.qty[item.id] > 0;
+          chips.appendChild(h('button', {
+            class: 'chip', 'aria-pressed': active ? 'true' : 'false',
+            onclick: function () {
+              openPad({
+                title: WR_CATALOG.labelOf(item.id), sub: '數量',
+                value: draft.qty[item.id], steps: item.steps,
+                onDone: function (v) {
+                  if (v > 0) draft.qty[item.id] = v; else delete draft.qty[item.id];
+                  paintSlots(); paintPicker(); onChange();
+                }
+              });
+            }
+          }, item.name, active ? h('span', { class: 'chip-qty', text: fmtQty(draft.qty[item.id]) }) : null));
+        });
+        picker.appendChild(h('div', { class: 'picker-group' },
+          h('div', { class: 'picker-group-head' },
+            h('span', { class: 'picker-group-name', text: g.name }),
+            h('span', { class: 'picker-group-hint', text: g.hint })),
+          chips));
+      });
+    }
+
+    paintSlots();
+    paintPicker();
+    wrap.refresh = function () { paintSlots(); paintPicker(); };
+    return wrap;
+  }
+
+  /* ====================================================================
+     禮包編輯器面板
+     ==================================================================== */
+
+  function openEditor(bundle) {
+    state.editor = bundle
+      ? { id: bundle.id, name: bundle.name, price: bundle.price, qty: cloneQty(bundle.qty), note: bundle.note, enabled: bundle.enabled !== false }
+      : { id: null, name: '', price: null, qty: {}, note: '', enabled: true };
+
+    $('editorTitle').textContent = bundle ? '編輯禮包' : '新增禮包';
+    $('editorSub').textContent = bundle ? (bundle.name || '未命名') : '點物品丸子加入，數量用鍵盤輸入';
+
+    var body = $('editorBody');
+    clear(body);
+    var draft = state.editor;
+    body.appendChild(composer(draft, function () {}, {}));
+
+    body.appendChild(h('div', { class: 'setting-row', style: 'border:1px solid var(--line); border-radius:var(--radius)' },
+      h('div', { class: 'setting-info' },
+        h('div', { class: 'setting-name', text: '納入推算' }),
+        h('div', { class: 'setting-desc', text: '關掉的話這筆會保留在試算表裡，但不影響單價計算。' })),
+      h('label', { class: 'switch' },
+        h('input', { type: 'checkbox', checked: draft.enabled ? true : null,
+          onchange: function (e) { draft.enabled = e.target.checked; } }),
+        h('span'))));
+
+    var foot = $('editorFoot');
+    clear(foot);
+    if (bundle) {
+      foot.appendChild(h('button', { class: 'btn btn-danger', onclick: function () { deleteBundle(bundle); } },
+        h('span', { svg: ICON.trash }), '刪除'));
+    }
+    foot.appendChild(h('button', { class: 'btn btn-primary', onclick: saveEditor },
+      h('span', { svg: ICON.check }), '儲存'));
+
+    openSheet('editorSheet');
+  }
+
+  function saveEditor() {
+    var d = state.editor;
+    if (!d) return;
+    if (!(d.price > 0)) { toast('請先輸入售價'); return; }
+    if (!Object.keys(d.qty).length) { toast('至少要加入一項物品'); return; }
+
+    closeSheet('editorSheet');
+    busy(true);
+    WRBridge.call('apiSaveBundle', {
+      id: d.id, name: d.name, price: d.price, qty: d.qty, note: d.note, enabled: d.enabled
+    }).then(function (res) {
+      state.bundles = res.bundles;
+      recompute();
+      render();
+      toast(d.id ? '已更新' : '已新增禮包');
+    }).catch(failed).then(function () { busy(false); });
+  }
+
+  function deleteBundle(bundle) {
+    if (!window.confirm('確定要刪除「' + (bundle.name || '未命名禮包') + '」嗎？')) return;
+    closeSheet('editorSheet');
+    busy(true);
+    WRBridge.call('apiDeleteBundle', bundle.id).then(function (res) {
+      state.bundles = res.bundles;
+      recompute();
+      render();
+      toast('已刪除');
+    }).catch(failed).then(function () { busy(false); });
+  }
+
+  function cloneQty(q) {
+    var out = {};
+    for (var k in q) if (Object.prototype.hasOwnProperty.call(q, k)) out[k] = q[k];
+    return out;
+  }
+
+  /* ====================================================================
+     性價比試算
+     ==================================================================== */
+
+  function renderEvaluate() {
+    var root = $('viewEvaluate');
+    clear(root);
+    var m = state.model;
+
+    if (!m || m.bundleCount === 0) {
+      root.appendChild(emptyState(
+        '需要先有基準單價',
+        '試算器會用歷史禮包解出的單價來估算新組合的理論價值。先記幾筆禮包吧。',
+        '去新增禮包', function () { go('bundles'); openEditor(null); }
+      ));
+      return;
+    }
+
+    var result = h('div', { style: 'display:flex; flex-direction:column; gap:22px' });
+
+    var comp = composer(state.draft, function () { paintResult(); }, { hideName: true });
+
+    root.appendChild(h('section', { class: 'section' },
+      h('div', { class: 'section-head' },
+        h('div', { class: 'section-title', text: '要評估的組合' }),
+        h('button', { class: 'btn btn-sm btn-ghost', onclick: function () {
+          state.draft = { name: '', price: null, qty: {} };
+          renderEvaluate();
+        } }, '清空')),
+      h('div', { class: 'card card-pad' }, comp)));
+
+    root.appendChild(result);
+    paintResult();
+
+    function paintResult() {
+      clear(result);
+      var d = state.draft;
+      if (!(d.price > 0) || !Object.keys(d.qty).length) {
+        result.appendChild(h('div', { class: 'notice' },
+          h('span', { class: 'ico', svg: ICON.alert }),
+          h('span', { text: '輸入售價並加入至少一項物品，下面就會即時算出性價比。' })));
+        return;
+      }
+      var ev = WR_EVAL.evaluate({ qty: d.qty, price: d.price }, m);
+      result.appendChild(verdictCard(ev));
+      result.appendChild(compareCard(ev));
+      if (ev.contributions.length) result.appendChild(contributionCard(ev));
+      if (ev.unpriced.length) {
+        result.appendChild(h('div', { class: 'notice notice-warn' },
+          h('span', { class: 'ico', svg: ICON.alert }),
+          h('span', { text: '這些物品還沒有基準單價，沒有被算進理論價值：' +
+            ev.unpriced.map(function (u) { return u.label; }).join('、') + '。先記一筆含有它們的禮包就會出現。' })));
+      }
+      result.appendChild(h('div', { style: 'display:flex; gap:9px' },
+        h('button', { class: 'btn btn-block', onclick: function () { logEvaluation(ev); } },
+          h('span', { svg: ICON.sync }), '存進試算紀錄')));
+    }
+  }
+
+  function verdictCard(ev) {
+    var tier = ev.tier;
+    var card = h('div', { class: 'verdict tone-' + tier.tone });
+    var icons = { good: ICON.check, neutral: ICON.equal, warning: ICON.minus, critical: ICON.alert };
+
+    card.appendChild(h('div', { class: 'verdict-top' },
+      h('div', { class: 'verdict-figure' },
+        h('div', { class: 'verdict-label', text: '性價比指數' }),
+        h('div', { class: 'verdict-value num', text: ev.ratio.toFixed(2) }),
+        ev.ratioLow !== null
+          ? h('div', { class: 'verdict-range', text: '可能區間 ' + ev.ratioLow.toFixed(2) + ' – ' + ev.ratioHigh.toFixed(2) })
+          : null),
+      h('div', { class: 'badge' }, h('span', { class: 'ico', svg: icons[tier.tone] }), tier.label)
+    ));
+
+    var lines = [tier.blurb + '（正常行情視為 ' + (1 - ev.band).toFixed(2) + ' – ' + (1 + ev.band).toFixed(2) + '，寬度取自模型自身的平均誤差）'];
+    if (ev.rank && ev.rank.total >= 3) {
+      lines.push('在你記錄的 ' + ev.rank.total + ' 筆禮包裡，它比其中 ' + ev.rank.beats + ' 筆划算。');
+    }
+    if (ev.confidenceCoverage < 0.6) {
+      lines.push('注意：理論價值裡只有 ' + pct(ev.confidenceCoverage) + ' 來自高信心的單價，這個結論還不夠穩。');
+    }
+    card.appendChild(h('div', { class: 'verdict-blurb', text: lines.join(' ') }));
+    return card;
+  }
+
+  function compareCard(ev) {
+    var max = Math.max(ev.value, ev.price) || 1;
+    var tone = ev.tier.tone;
+    return h('section', { class: 'section' },
+      h('div', { class: 'section-title', text: '理論價值 vs 售價' }),
+      h('div', { class: 'card card-pad tone-' + tone },
+        h('div', { class: 'compare' },
+          h('div', { class: 'compare-row' },
+            h('div', { class: 'compare-key', text: '理論價值' }),
+            h('div', { class: 'compare-track' }, h('i', { class: 'bg-fill', style: 'width:' + (ev.value / max * 100) + '%' })),
+            h('div', { class: 'compare-val', text: fmtMoney(ev.value) })),
+          h('div', { class: 'compare-row' },
+            h('div', { class: 'compare-key', text: '實際售價' }),
+            h('div', { class: 'compare-track' }, h('i', { style: 'width:' + (ev.price / max * 100) + '%; background:var(--ink-3)' })),
+            h('div', { class: 'compare-val', text: fmtMoney(ev.price) }))),
+        h('div', { class: 'section-note', style: 'margin-top:11px',
+          text: ev.value >= ev.price
+            ? '照目前行情，這包大約值 ' + fmtMoney(ev.value) + ' 元，比標價多 ' + fmtMoney(ev.value - ev.price) + ' 元。'
+            : '照目前行情，這包大約值 ' + fmtMoney(ev.value) + ' 元，比標價少 ' + fmtMoney(ev.price - ev.value) + ' 元。' })));
+  }
+
+  function contributionCard(ev) {
+    // 只畫前 5 名，其餘併成「其他」—— 類別色超過 5 個就無法保證可辨識度。
+    var top = ev.contributions.slice(0, 5);
+    var rest = ev.contributions.slice(5);
+    var restValue = rest.reduce(function (s, c) { return s + c.value; }, 0);
+
+    var stack = h('div', { class: 'stack', role: 'img', 'aria-label': '價值組成' });
+    top.forEach(function (c, i) {
+      if (c.share > 0.005) stack.appendChild(h('i', { style: 'width:' + (c.share * 100) + '%; background:' + SERIES[i] }));
+    });
+    if (restValue > 0) {
+      stack.appendChild(h('i', { style: 'width:' + (restValue / ev.value * 100) + '%; background:' + OTHER_COLOR }));
+    }
+
+    var legend = h('div', { class: 'legend' });
+    top.forEach(function (c, i) {
+      legend.appendChild(h('div', { class: 'legend-row' },
+        h('span', { class: 'legend-swatch', style: 'background:' + SERIES[i] }),
+        h('span', { class: 'legend-name' }, c.label,
+          h('span', { text: fmtQty(c.qty) + ' × ' + fmtPrice(c.unitPrice) + ' 元 · ' + (CONF_TEXT[c.confidence] || '') })),
+        h('span', { class: 'legend-val', text: fmtMoney(c.value) }),
+        h('span', { class: 'legend-share', text: pct(c.share) })));
+    });
+    if (restValue > 0) {
+      legend.appendChild(h('div', { class: 'legend-row' },
+        h('span', { class: 'legend-swatch', style: 'background:' + OTHER_COLOR }),
+        h('span', { class: 'legend-name' }, '其他 ' + rest.length + ' 項'),
+        h('span', { class: 'legend-val', text: fmtMoney(restValue) }),
+        h('span', { class: 'legend-share', text: pct(restValue / ev.value) })));
+    }
+
+    return h('section', { class: 'section' },
+      h('div', { class: 'section-head' },
+        h('div', { class: 'section-title', text: '價值是誰撐起來的' }),
+        h('div', { class: 'section-note', text: '共 ' + ev.contributions.length + ' 項' })),
+      h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:13px' }, stack, legend));
+  }
+
+  function logEvaluation(ev) {
+    var contents = ev.contributions.map(function (c) {
+      return WR_CATALOG.labelOf(c.id) + ' ' + group(c.qty);
+    }).join('、');
+    busy(true);
+    WRBridge.call('apiLogEvaluation', {
+      name: state.draft.name || '試算組合',
+      price: ev.price, value: ev.value, ratio: ev.ratio,
+      verdict: ev.tier.label, contents: contents
+    }).then(function () { toast('已存進試算紀錄'); }).catch(failed).then(function () { busy(false); });
+  }
+
+  /* ====================================================================
+     設定
+     ==================================================================== */
+
+  function renderSettings() {
+    var root = $('viewSettings');
+    clear(root);
+    var m = state.model;
+
+    // 鎖定基準單價
+    var lockList = h('div', { class: 'card' });
+    var items = (m && m.items.length) ? m.items : [];
+    if (!items.length) {
+      lockList.appendChild(h('div', { class: 'empty' }, h('span', { text: '還沒有物品可以鎖定' })));
+    } else {
+      items.slice().sort(function (a, b) {
+        return WR_CATALOG.IDS.indexOf(a.id) - WR_CATALOG.IDS.indexOf(b.id);
+      }).forEach(function (it) {
+        var locked = Object.prototype.hasOwnProperty.call(state.locks, it.id);
+        lockList.appendChild(h('div', { class: 'lock-row' },
+          h('div', { class: 'lock-info' },
+            h('div', { class: 'lock-name', text: it.label }),
+            h('div', { class: 'lock-est', text: (locked ? '解出值會被覆寫' : '目前解出 ' + fmtPrice(it.price) + ' 元') +
+              ' · 出現 ' + it.occurrences + ' 包' })),
+          h('input', {
+            class: 'lock-input', type: 'number', step: 'any', min: '0',
+            'data-locked': locked ? 'true' : 'false',
+            'aria-label': it.label + ' 鎖定單價',
+            placeholder: '未鎖定',
+            value: locked ? state.locks[it.id] : '',
+            onchange: function (e) { setLock(it.id, e.target.value); },
+            oninput: function (e) { e.target.setAttribute('data-locked', e.target.value === '' ? 'false' : 'true'); }
+          })));
+      });
+    }
+
+    root.appendChild(h('section', { class: 'section' },
+      h('div', { class: 'section-title', text: '鎖定基準單價' }),
+      h('div', { class: 'section-note', text: '對某個物品填入你有把握的單價，它就會被當成已知值，從售價裡先扣掉，其餘物品再去解剩下的部分。這是讓稀有物品的估計收斂最有效的手段。留空代表交給引擎自己解。' }),
+      lockList));
+
+    // 推算參數
+    var s = state.settings;
+    root.appendChild(h('section', { class: 'section' },
+      h('div', { class: 'section-title', text: '推算參數' }),
+      h('div', { class: 'card' },
+        settingRow('正則化強度', '調高會把稀有物品的單價往 0 拉，結果更保守也更穩定；調成 0 就是純粹的非負最小平方。',
+          h('input', { type: 'range', min: '0', max: '0.1', step: '0.001', value: s.ridge,
+            oninput: function (e) {
+              s.ridge = Number(e.target.value);
+              e.target.parentNode.querySelector('.setting-value').textContent = s.ridge.toFixed(3);
+              recomputeSoon(); persistSettings();
+            } }),
+          h('span', { class: 'setting-value', text: Number(s.ridge).toFixed(3) })),
+        settingRow('相對誤差等權', '開啟時每包不分貴賤同等發言權；關閉的話高價禮包會主導整個結果。',
+          h('label', { class: 'switch' },
+            h('input', { type: 'checkbox', checked: s.relativeWeighting ? true : null,
+              onchange: function (e) { s.relativeWeighting = e.target.checked; recompute(); render(); persistSettings(); } }),
+            h('span'))),
+        settingRow('重抽次數', '算可能區間用的 bootstrap 次數。越多越穩定，但每次重算會慢一點。',
+          h('input', { type: 'number', min: '30', max: '600', step: '10', value: s.samples,
+            onchange: function (e) { s.samples = Number(e.target.value) || 240; recompute(); render(); persistSettings(); } })),
+        settingRow('區間信賴水準', '0.8 代表顯示 80% 可能區間。拉高會讓區間變寬。',
+          h('input', { type: 'number', min: '0.5', max: '0.99', step: '0.05', value: s.interval,
+            onchange: function (e) { s.interval = Number(e.target.value) || 0.8; recompute(); render(); persistSettings(); } }))
+      )));
+
+    // 資料
+    root.appendChild(h('section', { class: 'section' },
+      h('div', { class: 'section-title', text: '試算表' }),
+      h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:9px' },
+        h('button', { class: 'btn btn-block', onclick: syncBoard }, h('span', { svg: ICON.sync }), '把單價看板寫回試算表'),
+        h('button', { class: 'btn btn-block', onclick: loadSample }, '載入範例禮包'),
+        state.spreadsheetUrl
+          ? h('a', { class: 'btn btn-block', href: state.spreadsheetUrl, target: '_blank', rel: 'noopener' }, '開啟試算表')
+          : null,
+        h('div', { class: 'section-note', text: '禮包資料本來就存在試算表的「禮包」工作表裡，你也可以直接在試算表上編輯，回來重整就會讀到。' })
+      )));
+  }
+
+  function settingRow(name, desc, control, extra) {
+    return h('div', { class: 'setting-row' },
+      h('div', { class: 'setting-info' },
+        h('div', { class: 'setting-name', text: name }),
+        h('div', { class: 'setting-desc', text: desc })),
+      h('div', { class: 'setting-control' }, control, extra));
+  }
+
+  function setLock(id, raw) {
+    if (raw === '' || raw === null) delete state.locks[id];
+    else {
+      var v = Number(raw);
+      if (!isFinite(v) || v < 0) { toast('鎖定單價必須是 0 或正數'); return; }
+      state.locks[id] = v;
+    }
+    recompute();
+    renderTopbar();
+    WRBridge.call('apiSaveLocks', state.locks).catch(failed);
+  }
+
+  var settingsTimer = null;
+  function persistSettings() {
+    if (settingsTimer) clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(function () {
+      WRBridge.call('apiSaveSettings', state.settings).catch(failed);
+    }, 700);
+  }
+
+  function syncBoard() {
+    if (!state.model || !state.model.items.length) { toast('還沒有可以寫入的單價'); return; }
+    busy(true);
+    WRBridge.call('apiSyncBoard', state.model.items).then(function (res) {
+      toast('已寫入 ' + res.written + ' 列到「單價看板」');
+    }).catch(failed).then(function () { busy(false); });
+  }
+
+  function loadSample() {
+    busy(true);
+    WRBridge.call('apiLoadSample').then(function (res) {
+      state.bundles = res.bundles;
+      recompute();
+      render();
+      toast('已載入範例資料');
+    }).catch(failed).then(function () { busy(false); });
+  }
+
+  /* ====================================================================
+     數字鍵盤
+     ==================================================================== */
+
+  var pad = { value: '', onDone: null, unit: '' };
+
+  function openPad(cfg) {
+    pad.value = cfg.value ? String(Math.round(cfg.value)) : '';
+    pad.onDone = cfg.onDone;
+    pad.unit = cfg.unit || '';
+    $('padTitle').textContent = cfg.title;
+    $('padSub').textContent = cfg.sub || '';
+
+    var quick = $('padQuick');
+    clear(quick);
+    (cfg.steps || []).forEach(function (n) {
+      quick.appendChild(h('button', { class: 'chip', onclick: function () { pad.value = String(n); paintPad(); } },
+        group(n)));
+    });
+
+    paintPad();
+    openSheet('padSheet');
+  }
+
+  function paintPad() {
+    var d = $('padDisplay');
+    clear(d);
+    var empty = pad.value === '' || Number(pad.value) === 0;
+    d.className = 'keypad-display' + (empty ? ' is-empty' : '');
+    if (pad.unit) d.appendChild(h('span', { class: 'unit', text: pad.unit }));
+    d.appendChild(document.createTextNode(pad.value === '' ? '0' : group(Number(pad.value))));
+  }
+
+  function padPress(key) {
+    if (key === 'back') pad.value = pad.value.slice(0, -1);
+    else if (key === 'clear') pad.value = '';
+    else {
+      if (pad.value === '0') pad.value = '';
+      if (pad.value.length < 12) pad.value += key;
+    }
+    paintPad();
+  }
+
+  function buildPad() {
+    var grid = $('padGrid');
+    clear(grid);
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (n) {
+      grid.appendChild(h('button', { text: n, onclick: function () { padPress(n); } }));
+    });
+    grid.appendChild(h('button', { class: 'key-util', text: '000', onclick: function () { padPress('000'); } }));
+    grid.appendChild(h('button', { text: '0', onclick: function () { padPress('0'); } }));
+    grid.appendChild(h('button', { class: 'key-util', 'aria-label': '刪除一位', svg: ICON.backspace,
+      onclick: function () { padPress('back'); } }));
+
+    $('padClear').addEventListener('click', function () { padPress('clear'); });
+    $('padDone').addEventListener('click', function () {
+      var v = pad.value === '' ? 0 : Number(pad.value);
+      closeSheet('padSheet');
+      if (pad.onDone) pad.onDone(v);
+    });
+    $('padClose').addEventListener('click', function () { closeSheet('padSheet'); });
+  }
+
+  // 電腦上直接打實體鍵盤也要能用
+  document.addEventListener('keydown', function (e) {
+    if ($('padSheet').getAttribute('data-open') !== 'true') return;
+    if (e.key >= '0' && e.key <= '9') { padPress(e.key); e.preventDefault(); }
+    else if (e.key === 'Backspace') { padPress('back'); e.preventDefault(); }
+    else if (e.key === 'Enter') { $('padDone').click(); e.preventDefault(); }
+    else if (e.key === 'Escape') { closeSheet('padSheet'); e.preventDefault(); }
+  });
+
+  /* ====================================================================
+     面板、吐司、雜項
+     ==================================================================== */
+
+  var openSheets = [];
+
+  function openSheet(id) {
+    var el = $(id);
+    el.setAttribute('data-open', 'true');
+    el.setAttribute('aria-hidden', 'false');
+    $('scrim').setAttribute('data-open', 'true');
+    if (openSheets.indexOf(id) === -1) openSheets.push(id);
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeSheet(id) {
+    var el = $(id);
+    el.setAttribute('data-open', 'false');
+    el.setAttribute('aria-hidden', 'true');
+    openSheets = openSheets.filter(function (x) { return x !== id; });
+    if (!openSheets.length) {
+      $('scrim').setAttribute('data-open', 'false');
+      document.body.style.overflow = '';
+    }
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.setAttribute('data-open', 'true');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.setAttribute('data-open', 'false'); }, 2600);
+  }
+
+  function busy(on) {
+    state.busy = on;
+    document.body.style.cursor = on ? 'progress' : '';
+  }
+
+  function failed(err) {
+    console.error(err);
+    toast('操作失敗：' + (err && err.message ? err.message : err));
+  }
+
+  function emptyState(title, body, cta, onCta) {
+    return h('div', { class: 'card' }, h('div', { class: 'empty' },
+      h('strong', { text: title }),
+      h('span', { style: 'max-width:38ch', text: body }),
+      cta ? h('button', { class: 'btn btn-primary', style: 'margin-top:6px', onclick: onCta },
+        h('span', { svg: ICON.plus }), cta) : null));
+  }
+
+  function toggleTheme() {
+    var root = document.documentElement;
+    var current = root.getAttribute('data-theme');
+    var next;
+    if (current === 'dark') next = 'light';
+    else if (current === 'light') next = 'dark';
+    else next = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('wr-theme', next); } catch (e) { /* 無痕模式等情況，忽略 */ }
+  }
+
+  /* ====================================================================
+     渲染與啟動
+     ==================================================================== */
+
+  function render() {
+    renderNav();
+    renderTopbar();
+
+    var map = { board: 'viewBoard', bundles: 'viewBundles', evaluate: 'viewEvaluate', settings: 'viewSettings' };
+    for (var k in map) $(map[k]).hidden = (k !== state.view);
+
+    if (state.view === 'board') renderBoard();
+    else if (state.view === 'bundles') renderBundles();
+    else if (state.view === 'evaluate') renderEvaluate();
+    else if (state.view === 'settings') renderSettings();
+
+    var fab = $('fab');
+    if (state.view === 'bundles' && state.bundles.length) {
+      fab.hidden = false;
+      clear(fab);
+      append(fab, [h('span', { svg: ICON.plus }), '新增禮包']);
+      fab.onclick = function () { openEditor(null); };
+    } else {
+      fab.hidden = true;
+    }
+  }
+
+  function boot() {
+    try {
+      var saved = localStorage.getItem('wr-theme');
+      if (saved) document.documentElement.setAttribute('data-theme', saved);
+    } catch (e) { /* 忽略 */ }
+
+    buildPad();
+    $('editorClose').addEventListener('click', function () { closeSheet('editorSheet'); });
+    $('scrim').addEventListener('click', function () {
+      if (openSheets.length) closeSheet(openSheets[openSheets.length - 1]);
+    });
+
+    render();
+
+    WRBridge.call('apiBootstrap').then(function (data) {
+      state.bundles = data.bundles || [];
+      state.settings = data.settings || state.settings;
+      state.locks = data.locks || {};
+      state.spreadsheetUrl = data.spreadsheetUrl || '';
+      state.ready = true;
+      recompute();
+      render();
+    }).catch(function (err) {
+      state.ready = true;
+      failed(err);
+      render();
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
