@@ -877,11 +877,13 @@
     card.appendChild(h('button', { class: 'btn btn-block btn-ghost', onclick: loadSample }, '載入範例禮包'));
 
     var io = h('div', { class: 'card card-pad', style: 'display:flex; flex-direction:column; gap:9px' },
-      h('button', { class: 'btn btn-primary btn-block', onclick: function () { openImport(''); } },
-        h('span', { svg: ICON.plus }), '從截圖批次新增'),
-      h('button', { class: 'btn btn-block', onclick: exportJson }, '匯出成 JSON'),
       h('div', { class: 'section-note',
-        text: '把商城截圖丟給任何看得懂圖的 AI，用下面提供的提示詞讓它產出 JSON，貼回來就能一次新增很多筆。' }));
+        text: '① 複製提示詞 → ② 連同商城截圖丟給任何看得懂圖的 AI → ③ 把它回你的 JSON 貼回來。' }),
+      h('button', { class: 'btn btn-block', onclick: copyPrompt },
+        h('span', { svg: ICON.check }), '複製辨識提示詞'),
+      h('button', { class: 'btn btn-primary btn-block', onclick: function () { openImport(''); } },
+        h('span', { svg: ICON.plus }), '貼上 JSON 批次新增'),
+      h('button', { class: 'btn btn-block btn-ghost', onclick: exportJson }, '匯出成 JSON'));
 
     return [
       h('section', { class: 'section' },
