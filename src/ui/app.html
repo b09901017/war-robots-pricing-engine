@@ -994,8 +994,11 @@
     var s = state.settings;
     root.appendChild(h('section', { class: 'section' },
       h('div', { class: 'section-title', text: '推算參數' }),
+      h('div', { class: 'section-note', text: '這四個平常不用動，預設值就是合理的。看板上的數字怪怪的時候再回來調。' }),
       h('div', { class: 'card' },
-        settingRow('正則化強度', '調高會把稀有物品的單價往 0 拉，結果更保守也更穩定；調成 0 就是純粹的非負最小平方。',
+        settingRow('保守程度',
+          '有些物品總是綁在一起賣，數學上分不出誰值多少。這個值決定遇到這種情況時要多保守：' +
+          '調高比較安全但會低估稀有物品，調到 0 代表完全相信資料。',
           h('input', { type: 'range', min: '0', max: '0.1', step: '0.001', value: s.ridge,
             oninput: function (e) {
               s.ridge = Number(e.target.value);
@@ -1003,15 +1006,20 @@
               recomputeSoon(); persistSettings();
             } }),
           h('span', { class: 'setting-value', text: Number(s.ridge).toFixed(3) })),
-        settingRow('相對誤差等權', '開啟時每包不分貴賤同等發言權；關閉的話高價禮包會主導整個結果。',
+        settingRow('大小包一樣重要',
+          '開著的話，30 元的小包和 3290 元的大包有一樣的發言權。關掉的話大包會主導整個結果，' +
+          '你記的那些小包等於白記。建議保持開啟。',
           h('label', { class: 'switch' },
             h('input', { type: 'checkbox', checked: s.relativeWeighting ? true : null,
               onchange: function (e) { s.relativeWeighting = e.target.checked; recompute(); render(); persistSettings(); } }),
             h('span'))),
-        settingRow('重抽次數', '算可能區間用的 bootstrap 次數。越多越穩定，但每次重算會慢一點。',
+        settingRow('重算次數',
+          '為了算出「可能區間」，程式會把你的禮包隨機抽換再重算很多次。次數越多區間越穩定，但會慢一點。',
           h('input', { type: 'number', min: '30', max: '600', step: '10', value: s.samples,
             onchange: function (e) { s.samples = Number(e.target.value) || 240; recompute(); render(); persistSettings(); } })),
-        settingRow('區間信賴水準', '0.8 代表顯示 80% 可能區間。拉高會讓區間變寬。',
+        settingRow('區間要畫多寬',
+          '看板上那條淺色橫條的寬度。0.8 代表「有八成機會真實單價落在這條裡」。' +
+          '只影響橫條，不影響單價本身。',
           h('input', { type: 'number', min: '0.5', max: '0.99', step: '0.05', value: s.interval,
             onchange: function (e) { s.interval = Number(e.target.value) || 0.8; recompute(); render(); persistSettings(); } }))
       )));
