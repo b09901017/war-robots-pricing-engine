@@ -118,16 +118,23 @@ https://script.google.com/macros/s/AKfycb…/exec
 
 ---
 
-## 開啟 GitHub Pages（只要做一次）
+## 網站部署
 
-在 GitHub repo 的 **Settings → Pages**，把 **Source** 設成 **GitHub Actions**。
+不用手動設定。推到 `main` 之後，`.github/workflows/deploy.yml` 會：
 
-之後每次推到 `main`，`.github/workflows/deploy.yml` 會先跑演算法測試，
-測試過了才建置並部署。網址是：
+1. 跑演算法測試（不過就不部署）
+2. 建置 `dist-web/`
+3. 自動開啟這個 repo 的 Pages（`configure-pages` 的 `enablement`）並發佈
+
+網址是：
 
 ```
 https://<你的帳號>.github.io/war-robots-pricing-engine/
 ```
+
+> 測試指令用 `npm test`，不要改成 `node --test 'test/*.test.js'`。
+> 加引號等於要 node 自己展開萬用字元，那是 Node 22 起才有的行為，
+> 舊版會把整串當成真實檔名然後找不到。交給 shell 展開就沒有版本問題。
 
 手機上用 Safari／Chrome 開這個網址，「加入主畫面」就跟原生 App 一樣。
 
