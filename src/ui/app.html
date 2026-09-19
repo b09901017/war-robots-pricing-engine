@@ -477,52 +477,83 @@
     pad.target = target;
     pad.buffer = target === 'price'
       ? (pad.draft.price ? String(pad.draft.price) : '')
-      : (pad.draft.qty[target] > 0 ? String(pad.draft.qty[target]) : '');
+      : WR_CATALOG.toInputValue(target, pad.draft.qty[target]);
     renderEditor();
+  }
+
+  /** 目前這一格是不是用縮放單位輸入（例如銀幣打 2.5 代表 2.5M）。 */
+  function padScale() {
+    return pad.target && pad.target !== 'price' ? WR_CATALOG.inputScaleOf(pad.target) : 1;
+  }
+
+  function padUnit() {
+    return pad.target && pad.target !== 'price' ? WR_CATALOG.inputUnitOf(pad.target) : '';
   }
 
   function padKey(key) {
     if (!pad.target) return;
-    if (key === 'back') pad.buffer = pad.buffer.slice(0, -1);
-    else if (key === 'clear') pad.buffer = '';
-    else {
+    if (key === 'back') {
+      pad.buffer = pad.buffer.slice(0, -1);
+    } else if (key === 'clear') {
+      pad.buffer = '';
+    } else if (key === '.') {
+      if (padScale() === 1 || pad.buffer.indexOf('.') >= 0) return;
+      pad.buffer = (pad.buffer === '' ? '0' : pad.buffer) + '.';
+    } else {
       if (pad.buffer === '0') pad.buffer = '';
+      var dot = pad.buffer.indexOf('.');
+      // 小數點後三位就是 1000 銀幣，再細沒有意義
+      if (dot >= 0 && pad.buffer.length - dot - 1 + key.length > 3) return;
       if (pad.buffer.length + key.length <= 12) pad.buffer += key;
     }
     padCommit();
   }
 
   function padQuick(value) {
-    pad.buffer = String(value);
+    pad.buffer = pad.target === 'price' ? String(value) : WR_CATALOG.toInputValue(pad.target, value);
     padCommit();
   }
 
   /** 把 buffer 寫回 draft，並只更新畫面上會變的那幾個字，不整頁重畫。 */
   function padCommit() {
-    var v = pad.buffer === '' ? 0 : Number(pad.buffer);
-    if (!isFinite(v)) v = 0;
-
     if (pad.target === 'price') {
+      var v = pad.buffer === '' ? 0 : Number(pad.buffer);
+      if (!isFinite(v)) v = 0;
       pad.draft.price = v > 0 ? v : null;
       if (pad.refs.price) {
         pad.refs.price.textContent = v > 0 ? group(v) : '0';
         pad.refs.price.className = 'val' + (v > 0 ? '' : ' is-empty');
       }
     } else {
-      pad.draft.qty[pad.target] = v;
+      var qty = WR_CATALOG.fromInputValue(pad.target, pad.buffer);
+      pad.draft.qty[pad.target] = qty;
       var ref = pad.refs.rows[pad.target];
       if (ref) {
-        ref.qty.textContent = v > 0 ? group(v) : '0';
-        ref.sub.textContent = rowSubtitle(pad.target, v);
+        // 打到一半顯示使用者正在打的字，不要跳成換算後的完整數字，
+        // 否則打「2.」的瞬間會看到 2,000,000 然後又變 2,500,000，很干擾。
+        ref.qty.textContent = padDisplayQty(pad.target, qty, true);
+        ref.sub.textContent = rowSubtitle(pad.target, qty);
       }
     }
     paintTotal();
   }
 
+  /** 焦點在這一格時顯示正在打的字＋單位；否則顯示換算後的數量。 */
+  function padDisplayQty(id, qty, focused) {
+    var unit = WR_CATALOG.inputUnitOf(id);
+    // 單位一定要跟著數字，不然「2.5」會被讀成 2.5 枚銀幣而不是 250 萬。
+    if (focused && unit) return (pad.buffer || '0') + ' ' + unit;
+    if (unit) return (WR_CATALOG.toInputValue(id, qty) || '0') + ' ' + unit;
+    return group(qty || 0);
+  }
+
   function rowSubtitle(id, qty) {
+    var unit = WR_CATALOG.inputUnitOf(id);
+    var prefix = unit ? '單位 ' + unit + ' · ' : '';
     var est = state.model && state.model.prices[id];
-    if (!est || !(qty > 0)) return dUnit(id).replace('元 / ', '每 ') + ' —';
-    return dUnit(id).replace('元 / ', '每 ') + ' ' + dPrice(id, est) + ' 元 · 小計 ' + fmtMoney(qty * est) + ' 元';
+    if (!est || !(qty > 0)) return prefix + dUnit(id).replace('元 / ', '每 ') + ' —';
+    return prefix + dUnit(id).replace('元 / ', '每 ') + ' ' + dPrice(id, est) +
+      ' 元 · 小計 ' + fmtMoney(qty * est) + ' 元';
   }
 
   function paintTotal() {
@@ -566,7 +597,8 @@
       card.appendChild(h('div', { class: 'ed-empty', text: '點下面的物品加進來' }));
     } else {
       ids.forEach(function (id) {
-        var qtyNode = h('span', { class: 'ed-row-qty', text: group(d.qty[id] || 0) });
+        var qtyNode = h('span', { class: 'ed-row-qty',
+          text: padDisplayQty(id, d.qty[id], pad.target === id) });
         var subNode = h('div', { class: 'ed-row-sub', text: rowSubtitle(id, d.qty[id]) });
         pad.refs.rows[id] = { qty: qtyNode, sub: subNode };
         card.appendChild(h('div', {
@@ -663,7 +695,8 @@
 
     var inner = h('div', { class: 'pad-inner' });
     var targetName = pad.target === 'price' ? '售價'
-      : (pad.target ? WR_CATALOG.labelOf(pad.target) + ' 的數量' : '');
+      : (pad.target ? WR_CATALOG.labelOf(pad.target) + ' 的數量' +
+          (padUnit() ? '（單位 ' + padUnit() + '）' : '') : '');
     inner.appendChild(h('div', { class: 'pad-hint' },
       h('span', null, '正在輸入：', h('b', { text: targetName || '—' })),
       h('button', { class: 'btn btn-sm btn-ghost', onclick: function () { padKey('clear'); } }, '清除')));
@@ -672,8 +705,11 @@
       ? WR_CATALOG.PRICE_STEPS
       : (pad.target ? (WR_CATALOG.get(pad.target) || {}).steps || [] : []);
     var quick = h('div', { class: 'pad-quick' });
+    var unit = padUnit();
     steps.forEach(function (n) {
-      quick.appendChild(h('button', { onclick: function () { padQuick(n); } }, group(n)));
+      var label = pad.target === 'price' ? group(n)
+        : (unit ? WR_CATALOG.toInputValue(pad.target, n) + ' ' + unit : group(n));
+      quick.appendChild(h('button', { onclick: function () { padQuick(n); } }, label));
     });
     inner.appendChild(quick);
 
@@ -681,7 +717,10 @@
     ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (n) {
       grid.appendChild(h('button', { text: n, onclick: function () { padKey(n); } }));
     });
-    grid.appendChild(h('button', { class: 'k-util', text: '000', onclick: function () { padKey('000'); } }));
+    // 打 M 為單位時 000 沒有意義（不會有人打 2000M），改給小數點。
+    grid.appendChild(padScale() > 1
+      ? h('button', { class: 'k-util', text: '.', onclick: function () { padKey('.'); } })
+      : h('button', { class: 'k-util', text: '000', onclick: function () { padKey('000'); } }));
     grid.appendChild(h('button', { text: '0', onclick: function () { padKey('0'); } }));
     grid.appendChild(h('button', { class: 'k-util', 'aria-label': '刪除一位', svg: ICON.backspace,
       onclick: function () { padKey('back'); } }));
@@ -1297,6 +1336,7 @@
       return;
     }
     if (e.key >= '0' && e.key <= '9') { padKey(e.key); e.preventDefault(); }
+    else if (e.key === '.') { padKey('.'); e.preventDefault(); }
     else if (e.key === 'Backspace') { padKey('back'); e.preventDefault(); }
     else if (e.key === 'Enter') { saveEditor(); e.preventDefault(); }
     else if (e.key === 'Escape') { closeEditor(); e.preventDefault(); }

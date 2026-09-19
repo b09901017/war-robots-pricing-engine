@@ -33,12 +33,17 @@ var WR_CATALOG = (function () {
    * per 純粹是顯示用的，推算引擎一律用「每 1 單位」的原始值。
    * 商城行情大幅變動時這些值可能需要重新校準。
    *
+   * inputScale / inputUnit = 輸入時的單位。銀幣動輒上百萬，遊戲本身也是顯示
+   * 「474.7 M」，要人在數字鍵盤上打 474700000 太荒謬，所以改成打 474.7 再乘回去。
+   * 這純粹是輸入介面的事，存進去與算進去的一律是原始數量。
+   *
    * common = 是否放在輸入介面的第一排。二十個物品全部攤開會變成一面牆，
    * 但實際上只有金卡以外的東西會天天用到 —— 金卡與泰坦太貴，多數人不會考慮，
    * 所以收進「更多」裡，需要時再展開。
    */
   var ITEMS = [
-    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, common: true, steps: [100000, 250000, 500000, 1000000, 2500000] },
+    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, common: true,
+      inputScale: 1000000, inputUnit: 'M', steps: [250000, 500000, 1000000, 2500000, 5000000, 10000000, 20000000] },
     { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, common: true, steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
     { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 1000, common: true, steps: [10000, 25000, 50000, 100000, 250000] },
     { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, common: true, steps: [5000, 10000, 25000, 50000, 100000] },
@@ -130,6 +135,36 @@ var WR_CATALOG = (function () {
     return formatUnitPrice(toDisplayPrice(id, unitPrice));
   }
 
+  /* ---------- 輸入單位 -------------------------------------------------
+     跟 per 是兩回事：per 管的是「單價怎麼顯示」，這裡管的是「數量怎麼輸入」。
+     -------------------------------------------------------------------- */
+
+  function inputScaleOf(id) {
+    var it = BY_ID[id];
+    return it && it.inputScale > 0 ? it.inputScale : 1;
+  }
+
+  function inputUnitOf(id) {
+    var it = BY_ID[id];
+    return (it && it.inputUnit) || '';
+  }
+
+  /** 真實數量 → 輸入框裡該顯示的數字（例如 2500000 → '2.5'）。 */
+  function toInputValue(id, qty) {
+    var scale = inputScaleOf(id);
+    if (!(qty > 0)) return '';
+    if (scale === 1) return String(qty);
+    var v = qty / scale;
+    return String(Math.round(v * 1000) / 1000);
+  }
+
+  /** 輸入框裡的數字 → 真實數量。小數乘回去會有浮點雜訊，所以取整。 */
+  function fromInputValue(id, text) {
+    var raw = Number(text);
+    if (!isFinite(raw) || raw <= 0) return 0;
+    return Math.round(raw * inputScaleOf(id));
+  }
+
   /** 常用物品：輸入介面預設只顯示這些，其餘收在「更多」裡。 */
   function commonItems() {
     return ITEMS.filter(function (it) { return it.common; });
@@ -205,6 +240,10 @@ var WR_CATALOG = (function () {
     nameOf: nameOf,
     labelOf: labelOf,
     groups: groups,
+    inputScaleOf: inputScaleOf,
+    inputUnitOf: inputUnitOf,
+    toInputValue: toInputValue,
+    fromInputValue: fromInputValue,
     commonItems: commonItems,
     restItems: restItems,
     perOf: perOf,

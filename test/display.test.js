@@ -101,3 +101,34 @@ test('若誤把計價單位的值直接當原始單價餵給引擎，結果會�
   assert.ok(wrong.warnings.some((w) => w.code === 'lock-exceeds-price'),
     '忘記換算應該會觸發「鎖定單價超過售價」的警告');
 });
+
+/* ---------- 輸入單位（跟計價單位是兩回事） ---------- */
+
+test('銀幣以 M 為單位輸入，存進去的是原始數量', () => {
+  assert.strictEqual(WR_CATALOG.inputScaleOf('ag'), 1000000);
+  assert.strictEqual(WR_CATALOG.inputUnitOf('ag'), 'M');
+  assert.strictEqual(WR_CATALOG.fromInputValue('ag', '2.5'), 2500000);
+  assert.strictEqual(WR_CATALOG.fromInputValue('ag', '474.7'), 474700000);
+  // 0.1 × 1e6 在浮點下是 100000.00000000001，必須取整
+  assert.strictEqual(WR_CATALOG.fromInputValue('ag', '0.1'), 100000);
+});
+
+test('其他物品維持原樣輸入', () => {
+  for (const id of ['au', 'pt', 'key', 'cell', 'dc_basic_ag']) {
+    assert.strictEqual(WR_CATALOG.inputScaleOf(id), 1, `${id} 不該有輸入縮放`);
+    assert.strictEqual(WR_CATALOG.inputUnitOf(id), '');
+    assert.strictEqual(WR_CATALOG.fromInputValue(id, '5000'), 5000);
+  }
+});
+
+test('數量與輸入字串來回轉換不失真', () => {
+  for (const qty of [250000, 500000, 2500000, 15000000, 474700000]) {
+    assert.strictEqual(WR_CATALOG.fromInputValue('ag', WR_CATALOG.toInputValue('ag', qty)), qty);
+  }
+});
+
+test('空字串與非數值一律當成 0，不會寫出 NaN 數量', () => {
+  for (const bad of ['', '.', 'abc', '-3', undefined]) {
+    assert.strictEqual(WR_CATALOG.fromInputValue('ag', bad), 0, `輸入 ${bad} 應為 0`);
+  }
+});
