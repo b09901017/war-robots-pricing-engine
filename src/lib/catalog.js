@@ -21,19 +21,24 @@ var WR_CATALOG = (function () {
    * 只是輸入捷徑，任何數字都可以用鍵盤自己打。
    *
    * per = 計價單位。銀幣一枚值 0.0000022 元，這種數字人腦讀不動，
-   * 所以看板改成「每 1M 2.2 元」。挑選原則是讓常見的單價落在 1～1000 元之間。
+   * 所以看板改成「每 1M 2.2 元」。挑選原則是讓常見單價落在 1～10 元之間。
+   *
+   * 資料卡與升級代幣停在 1：它們一單位就值好幾十塊，而你不可能買半張卡，
+   * 再縮下去只會變成「每 0.1 張」這種沒有意義的單位。
+   *
    * per 純粹是顯示用的，推算引擎一律用「每 1 單位」的原始值。
+   * 商城行情大幅變動時這些值可能需要重新校準。
    */
   var ITEMS = [
     { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, steps: [100000, 250000, 500000, 1000000, 2500000] },
     { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
-    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 10000, steps: [10000, 25000, 50000, 100000, 250000] },
-    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 10000, steps: [5000, 10000, 25000, 50000, 100000] },
+    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 1000, steps: [10000, 25000, 50000, 100000, 250000] },
+    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 1000, steps: [5000, 10000, 25000, 50000, 100000] },
 
     { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, steps: [50, 100, 250, 500, 1000] },
-    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 100, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 10, steps: [1, 2, 3, 5, 10, 20] },
     { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 1000, steps: [1000, 3200, 6400, 12800, 25600] },
-    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 1000, steps: [500, 1000, 2500, 5000, 10000] },
+    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 100, steps: [500, 1000, 2500, 5000, 10000] },
     { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, steps: [100, 250, 500, 1000, 2500] },
 
     { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },

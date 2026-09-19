@@ -6,24 +6,37 @@ const { loadLibs, makeBundles } = require('./helper');
 
 const { WR_CATALOG, WR_SOLVER } = loadLibs();
 
-test('計價單位讓常見單價落在看得懂的範圍', () => {
-  // 左邊是實際解出的「每 1 單位」單價，右邊是換算後應該看到的數字。
+/**
+ * 可以大量計量的物品，換算後要落在 1～10 元。
+ * 左邊是實際截圖解出的「每 1 單位」單價，右邊是看板上應該出現的數字。
+ */
+test('計價單位讓可大量計量的物品落在 1～10 元', () => {
   const cases = [
     ['ag', 0.0000022, 2.2],      // 每 1M
     ['au', 0.00558, 5.58],       // 每 1K
-    ['key', 0.00484, 48.4],      // 每 10K
+    ['key', 0.00484, 4.84],      // 每 1K
     ['cell', 0.0077, 7.7],       // 每 1K
-    ['module', 0.135, 13.5],     // 每 100
-    ['pilotchip', 0.0118, 11.8], // 每 1K
-    ['uptoken', 32.8, 32.8],     // 每 1 個
-    ['dc_basic_ag', 4.85, 4.85]  // 每 1 張
+    ['module', 0.135, 1.35],     // 每 10
+    ['pilotchip', 0.0118, 1.18]  // 每 100
   ];
   for (const [id, unitPrice, expected] of cases) {
     const got = WR_CATALOG.toDisplayPrice(id, unitPrice);
     assert.ok(Math.abs(got - expected) < 1e-9, `${id}: 期望 ${expected}，得到 ${got}`);
-    assert.ok(Math.abs(got) >= 1 && Math.abs(got) < 1000,
-      `${id} 換算後是 ${got}，不在 1~1000 這個好讀的範圍`);
+    assert.ok(got >= 1 && got < 10,
+      `${id} 換算後是 ${got}，不在 1～10。請重新校準 catalog.js 的 per。`);
   }
+});
+
+/**
+ * 資料卡與升級代幣一單位就值好幾十塊，而且買不到半張，
+ * 所以它們停在「每 1 個／張」是刻意的，不是漏掉沒調。
+ */
+test('單位不可再細分的物品維持每 1 個', () => {
+  for (const id of ['uptoken', 'dc_basic_ag', 'dc_titan', 'dc_ultimate', 'misc']) {
+    assert.strictEqual(WR_CATALOG.perOf(id), 1, `${id} 不該有大於 1 的計價單位`);
+  }
+  assert.strictEqual(WR_CATALOG.toDisplayPrice('dc_basic_ag', 4.85), 4.85);
+  assert.strictEqual(WR_CATALOG.toDisplayPrice('uptoken', 32.8), 32.8);
 });
 
 test('換算來回不會失真', () => {
@@ -37,8 +50,8 @@ test('換算來回不會失真', () => {
 test('計價單位標籤', () => {
   assert.strictEqual(WR_CATALOG.perLabel('ag'), '1M');
   assert.strictEqual(WR_CATALOG.perLabel('au'), '1K');
-  assert.strictEqual(WR_CATALOG.perLabel('key'), '10K');
-  assert.strictEqual(WR_CATALOG.perLabel('module'), '100');
+  assert.strictEqual(WR_CATALOG.perLabel('key'), '1K');
+  assert.strictEqual(WR_CATALOG.perLabel('module'), '10');
   assert.strictEqual(WR_CATALOG.perLabel('uptoken'), '');
   assert.strictEqual(WR_CATALOG.priceUnitLabel('ag'), '元 / 1M');
   assert.strictEqual(WR_CATALOG.priceUnitLabel('dc_titan'), '元 / 張');
