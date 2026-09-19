@@ -24,17 +24,27 @@ var WR_SOLVER = (function () {
   'use strict';
 
   var DEFAULTS = {
-    ridge: 0.005,          // 正則化強度（欄位正規化後的尺度，0 ~ 0.1 之間合理）
+    /**
+     * 參考值的份量，單位是「相當於幾次觀測」。拉力正好是 份量/(觀測次數+份量)。
+     *
+     * 預設 1 是刻意保守的：參考值在共線、資料完全無法分辨的情況下只要有一點點
+     * 份量就足以決定分攤，但在資料本來就夠的地方，它反而會把答案往錯的方向拉一些，
+     * 而且會透過物品之間的相關性波及到沒給參考值的物品。所以份量給到「一筆」就好。
+     */
+    priorWeight: 1,
+    /** 純粹避免矩陣退化的最小正則化。共線時決定「平手就選比較小的」，其餘情況影響可以忽略。 */
+    ridgeFloor: 0.01,
     relativeWeighting: true,
     bootstrap: true,
     samples: 240,
     interval: 0.8,         // 80% 區間：比 95% 窄，對「這包值不值」這種決策更實用
     seed: 1337             // 固定種子，資料沒變時區間就不會自己跳動
+    // priors: {物品id: 每單位參考單價} —— 正則化的錨點，不是鎖定值
   };
 
   function solve(bundles, options) {
     var opt = merge(DEFAULTS, options || {});
-    var locks = opt.locks || {};
+    var priors = opt.priors || {};
 
     var rows = [];
     for (var i = 0; i < bundles.length; i++) {
@@ -48,57 +58,35 @@ var WR_SOLVER = (function () {
     }
 
     var stats = itemStats(rows);
-    var present = stats.present;
-
-    // 鎖定的物品單價視為已知，從售價裡先扣掉，不參與求解。
-    var solveIds = [];
-    for (i = 0; i < present.length; i++) {
-      if (!isLocked(locks, present[i])) solveIds.push(present[i]);
-    }
-
+    var solveIds = stats.present;
     var warnings = [];
-    var target = [];
-    var lockedValue = [];
-    for (i = 0; i < rows.length; i++) {
-      var lv = 0;
-      for (var id in locks) {
-        if (!Object.prototype.hasOwnProperty.call(locks, id)) continue;
-        if (!isLocked(locks, id)) continue;
-        lv += (rows[i].qty[id] || 0) * Number(locks[id]);
-      }
-      lockedValue.push(lv);
-      target.push(rows[i].price - lv);
-    }
-    for (i = 0; i < rows.length; i++) {
-      if (target[i] < 0) {
-        warnings.push({
-          level: 'warn',
-          code: 'lock-exceeds-price',
-          text: '「' + (rows[i].name || rows[i].id) + '」的鎖定單價加總已超過它的售價，請檢查鎖定值。'
-        });
-        break;
-      }
-    }
 
-    var point = fit(rows, solveIds, target, opt);
+    var target = [];
+    for (i = 0; i < rows.length; i++) target.push(rows[i].price);
+
+    var point = fit(rows, solveIds, target, opt, priors);
     var prices = {};
     for (i = 0; i < solveIds.length; i++) prices[solveIds[i]] = point[i];
-    for (id in locks) {
-      if (Object.prototype.hasOwnProperty.call(locks, id) && isLocked(locks, id)) {
-        prices[id] = Number(locks[id]);
-      }
+
+    // 同一批資料再解一次、但完全不理會參考值。兩者的差距就是「參考值影響了多少」，
+    // 讓使用者看得出結論是資料撐起來的，還是只是自己的猜測被原樣印回來。
+    var hasPriors = countPriors(priors, solveIds) > 0;
+    var dataOnly = {};
+    if (hasPriors) {
+      var bare = fit(rows, solveIds, target, opt, null);
+      for (i = 0; i < solveIds.length; i++) dataOnly[solveIds[i]] = bare[i];
     }
 
     var interval = null;
     var draws = null;
     if (opt.bootstrap && rows.length >= 3 && solveIds.length > 0) {
-      var boot = bootstrap(rows, solveIds, locks, opt, point);
+      var boot = bootstrap(rows, solveIds, priors, opt, point);
       interval = boot.interval;
       draws = { itemIds: solveIds, values: boot.values };
     }
 
     var diagnostics = fitQuality(rows, prices);
-    var items = describeItems(present, prices, interval, stats, locks, rows.length);
+    var items = describeItems(solveIds, prices, interval, stats, priors, dataOnly, hasPriors);
 
     if (rows.length === 0) {
       warnings.push({ level: 'info', code: 'no-data', text: '還沒有任何禮包資料，先新增幾筆再回來看單價。' });
@@ -108,7 +96,8 @@ var WR_SOLVER = (function () {
       warnings.push({
         level: 'warn',
         code: 'underdetermined',
-        text: '待解物品（' + solveIds.length + ' 種）比禮包筆數（' + rows.length + ' 筆）還多，方程式不足。可以鎖定幾個你有把握的單價來收斂結果。'
+        text: '待解物品（' + solveIds.length + ' 種）比禮包筆數（' + rows.length + ' 筆）還多，方程式不足。' +
+          '再多記幾筆，或到設定裡給幾個參考單價當起點。'
       });
     }
 
@@ -128,18 +117,18 @@ var WR_SOLVER = (function () {
     return {
       bundleCount: rows.length,
       solvedCount: solveIds.length,
-      lockedCount: countLocks(locks, present),
+      priorCount: countPriors(priors, solveIds),
       items: items,
       prices: prices,
       fit: diagnostics,
       draws: draws,
       warnings: warnings,
-      options: { ridge: opt.ridge, relativeWeighting: opt.relativeWeighting, samples: opt.samples, interval: opt.interval }
+      options: { priorWeight: opt.priorWeight, relativeWeighting: opt.relativeWeighting, samples: opt.samples, interval: opt.interval }
     };
   }
 
   /** 單次求解：加權 → 欄位正規化 → NNLS → 還原尺度。回傳與 itemIds 同序的單價陣列。 */
-  function fit(rows, itemIds, target, opt) {
+  function fit(rows, itemIds, target, opt, priors) {
     var m = rows.length;
     var n = itemIds.length;
     if (m === 0 || n === 0) return WR_LINALG.zeros(n);
@@ -160,11 +149,24 @@ var WR_SOLVER = (function () {
       A[i] = row;
     }
 
+    /*
+     * 欄位縮放用「該物品出現過的那幾列」的均方根，而不是整欄的長度。
+     * 這樣縮放後 G 的對角線正好等於該物品被觀測到的次數，於是正則化的
+     * 係數就有了明確的單位：λ = 2 就是「參考值相當於兩次觀測」。
+     *
+     * 先前版本把整個問題正規化成與筆數無關，λ 的相對份量因此永遠不變，
+     * 資料再多也推不翻參考值 —— 那正好毀掉這個功能存在的理由。
+     */
     var colNorm = new Array(n);
+    var occ = new Array(n);
     for (j = 0; j < n; j++) {
-      var s = 0;
-      for (i = 0; i < m; i++) s += A[i][j] * A[i][j];
-      colNorm[j] = Math.sqrt(s);
+      var sq = 0;
+      var k = 0;
+      for (i = 0; i < m; i++) {
+        if (A[i][j] !== 0) { sq += A[i][j] * A[i][j]; k++; }
+      }
+      occ[j] = k;
+      colNorm[j] = k > 0 ? Math.sqrt(sq / k) : 0;
     }
     for (j = 0; j < n; j++) {
       if (colNorm[j] > 0) {
@@ -173,12 +175,31 @@ var WR_SOLVER = (function () {
     }
 
     var b = new Array(m);
-    for (i = 0; i < m; i++) b[i] = target[i] * weights[i];
-    var bNorm = WR_LINALG.norm2(b);
+    var bsq = 0;
+    for (i = 0; i < m; i++) {
+      b[i] = target[i] * weights[i];
+      bsq += b[i] * b[i];
+    }
+    var bNorm = Math.sqrt(bsq / m);
     if (bNorm === 0) return WR_LINALG.zeros(n);
     for (i = 0; i < m; i++) b[i] /= bNorm;
 
-    var scaled = WR_LINALG.nnls(A, b, opt.ridge);
+    // 參考值要換到同一個縮放座標系，否則錨點會落在完全不同的位置。
+    // 還原時是 x = scaled * bNorm / colNorm，反過來就是 scaled = x * colNorm / bNorm。
+    var prior = null;
+    var ridgeVec = new Array(n);
+    for (j = 0; j < n; j++) {
+      var pv = priors ? Number(priors[itemIds[j]]) : NaN;
+      var hasPrior = isFinite(pv) && pv > 0 && colNorm[j] > 0;
+      if (hasPrior) {
+        if (!prior) prior = WR_LINALG.zeros(n);
+        prior[j] = (pv * colNorm[j]) / bNorm;
+      }
+      // 有參考值的欄位給足份量；沒有的只給最低限度，避免被無謂地往 0 拉。
+      ridgeVec[j] = hasPrior ? opt.priorWeight : opt.ridgeFloor;
+    }
+
+    var scaled = WR_LINALG.nnls(A, b, ridgeVec, prior);
 
     var out = new Array(n);
     for (j = 0; j < n; j++) {
@@ -188,7 +209,7 @@ var WR_SOLVER = (function () {
   }
 
   /** 重抽禮包（有放回）重解多次，得到每個物品單價的經驗分布。 */
-  function bootstrap(rows, itemIds, locks, opt, point) {
+  function bootstrap(rows, itemIds, priors, opt, point) {
     var m = rows.length;
     var n = itemIds.length;
     var rand = WR_LINALG.rng(opt.seed);
@@ -208,16 +229,8 @@ var WR_SOLVER = (function () {
         }
       }
       var target = new Array(m);
-      for (i = 0; i < m; i++) {
-        var lv = 0;
-        for (var lid in locks) {
-          if (Object.prototype.hasOwnProperty.call(locks, lid) && isLocked(locks, lid)) {
-            lv += (picked[i].qty[lid] || 0) * Number(locks[lid]);
-          }
-        }
-        target[i] = picked[i].price - lv;
-      }
-      var est = fit(picked, itemIds, target, opt);
+      for (i = 0; i < m; i++) target[i] = picked[i].price;
+      var est = fit(picked, itemIds, target, opt, priors);
       // 這一輪沒抽到的物品沒有估計值，記成 null 而不是 0 —— 記成 0 會把區間往下拉歪。
       for (var j = 0; j < n; j++) {
         if (!seen[itemIds[j]]) est[j] = null;
@@ -277,7 +290,7 @@ var WR_SOLVER = (function () {
     return { occurrences: occurrences, totalQty: totalQty, present: present };
   }
 
-  function describeItems(present, prices, interval, stats, locks, bundleCount) {
+  function describeItems(present, prices, interval, stats, priors, dataOnly, hasPriors) {
     var out = [];
     var grandTotal = 0;
     var contribution = {};
@@ -291,23 +304,33 @@ var WR_SOLVER = (function () {
       id = present[i];
       var band = interval ? interval[id] : null;
       var price = prices[id];
-      var locked = isLocked(locks, id);
+      var prior = Number(priors[id]);
+      var hasPrior = isFinite(prior) && prior > 0;
       var occ = stats.occurrences[id] || 0;
       var relWidth = null;
       if (band && price > 0) relWidth = (band.high - band.low) / price;
+
+      // 參考值把答案拉動了多少。接近 0 代表結論是資料自己撐起來的。
+      var pull = null;
+      if (hasPriors && hasPrior && dataOnly[id] !== undefined) {
+        var base = Math.max(price, dataOnly[id]);
+        pull = base > 0 ? Math.abs(price - dataOnly[id]) / base : 0;
+      }
       out.push({
         id: id,
         label: WR_CATALOG.labelOf(id),
         group: (WR_CATALOG.get(id) || {}).group || 'other',
         price: price,
-        locked: locked,
+        prior: hasPrior ? prior : null,
+        dataOnlyPrice: hasPriors && dataOnly[id] !== undefined ? dataOnly[id] : null,
+        priorPull: pull,
         low: band ? band.low : null,
         high: band ? band.high : null,
         relativeWidth: relWidth,
         occurrences: occ,
         totalQty: stats.totalQty[id] || 0,
         share: grandTotal > 0 ? contribution[id] / grandTotal : 0,
-        confidence: locked ? 'locked' : confidenceOf(occ, relWidth, price, bundleCount)
+        confidence: confidenceOf(occ, relWidth, price)
       });
     }
     out.sort(function (a, b) { return b.share - a.share; });
@@ -318,7 +341,7 @@ var WR_SOLVER = (function () {
    * 信心度看兩件事：這個物品出現在幾包裡（資料量），
    * 以及重抽區間相對於點估計有多寬（穩定度）。
    */
-  function confidenceOf(occurrences, relWidth, price, bundleCount) {
+  function confidenceOf(occurrences, relWidth, price) {
     if (occurrences === 0) return 'none';
     if (price === 0) return 'low';
     if (relWidth === null) return occurrences >= 4 ? 'mid' : 'low';
@@ -383,15 +406,13 @@ var WR_SOLVER = (function () {
     return t;
   }
 
-  function isLocked(locks, id) {
-    if (!locks || !Object.prototype.hasOwnProperty.call(locks, id)) return false;
-    var v = Number(locks[id]);
-    return isFinite(v) && v >= 0;
-  }
-
-  function countLocks(locks, present) {
+  function countPriors(priors, ids) {
+    if (!priors) return 0;
     var c = 0;
-    for (var i = 0; i < present.length; i++) if (isLocked(locks, present[i])) c++;
+    for (var i = 0; i < ids.length; i++) {
+      var v = Number(priors[ids[i]]);
+      if (isFinite(v) && v > 0) c++;
+    }
     return c;
   }
 

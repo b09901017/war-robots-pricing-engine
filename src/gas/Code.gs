@@ -54,7 +54,7 @@ function handle(body) {
     case 'saveBundle':     saveBundle(p); return ok({ bundles: readBundles() });
     case 'saveBundles':    saveBundles(p); return ok({ bundles: readBundles() });
     case 'deleteBundle':   deleteBundle(p); return ok({ bundles: readBundles() });
-    case 'saveLocks':      saveLocks(p); return ok({});
+    case 'savePriors':     savePriors(p); return ok({});
     case 'saveSettings':   saveSettings(p); return ok({});
     case 'syncBoard':      return ok({ written: writeBoard(p) });
     case 'logEvaluation':  appendEvaluation(p); return ok({});
@@ -88,7 +88,7 @@ function tokenOk(token) {
 
 var SHEETS = { bundles: '禮包', board: '單價看板', settings: '設定', evaluations: '試算紀錄' };
 var BUNDLE_FIXED = ['ID', '名稱', '售價(TWD)', '日期', '啟用'];
-var BOARD_HEADERS = ['物品', '計價單位', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '鎖定單價'];
+var BOARD_HEADERS = ['物品', '計價單位', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '參考單價'];
 var EVAL_HEADERS = ['時間', '名稱', '售價(TWD)', '理論價值', '性價比指數', '評價', '內容'];
 
 function spreadsheet() {
@@ -123,7 +123,7 @@ function ensureSchema() {
   if (st.getLastRow() === 0) {
     st.getRange(1, 1, 1, 3).setValues([['設定項', '值', '說明']]);
     st.getRange(2, 1, 4, 3).setValues([
-      ['ridge', 0.005, '正則化強度。調高會讓稀有物品的單價更保守，建議 0 ~ 0.1。'],
+      ['priorWeight', 1, '參考單價的份量，單位是「相當於幾筆禮包」。0 代表完全不理會參考單價。'],
       ['relativeWeighting', true, '是否讓每包的相對誤差等權。關掉的話高價禮包會主導結果。'],
       ['bootstrapSamples', 240, '重抽次數。越多區間越穩，但計算越慢。'],
       ['interval', 0.8, '區間信賴水準，例如 0.8 代表 80% 區間。']
@@ -171,7 +171,7 @@ function loadAll() {
   return {
     bundles: readBundles(),
     settings: readSettings(),
-    locks: readLocks(),
+    priors: readPriors(),
     spreadsheetUrl: spreadsheet().getUrl(),
     spreadsheetName: spreadsheet().getName()
   };
@@ -302,11 +302,11 @@ function deleteBundle(id) {
 
 function readSettings() {
   var sh = sheet(SHEETS.settings);
-  var out = { ridge: 0.005, relativeWeighting: true, samples: 240, interval: 0.8 };
+  var out = { priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8 };
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return out;
   var rows = sh.getRange(2, 1, lastRow - 1, 2).getValues();
-  var map = { ridge: 'ridge', relativeWeighting: 'relativeWeighting', bootstrapSamples: 'samples', interval: 'interval' };
+  var map = { priorWeight: 'priorWeight', relativeWeighting: 'relativeWeighting', bootstrapSamples: 'samples', interval: 'interval' };
   for (var r = 0; r < rows.length; r++) {
     var key = map[String(rows[r][0]).trim()];
     if (!key) continue;
@@ -322,7 +322,7 @@ function saveSettings(settings) {
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return;
   var keys = sh.getRange(2, 1, lastRow - 1, 1).getValues();
-  var map = { ridge: 'ridge', relativeWeighting: 'relativeWeighting', bootstrapSamples: 'samples', interval: 'interval' };
+  var map = { priorWeight: 'priorWeight', relativeWeighting: 'relativeWeighting', bootstrapSamples: 'samples', interval: 'interval' };
   for (var r = 0; r < keys.length; r++) {
     var key = map[String(keys[r][0]).trim()];
     if (key && settings[key] !== undefined) sh.getRange(r + 2, 2).setValue(settings[key]);
@@ -335,54 +335,54 @@ function labelToId() {
   return m;
 }
 
-/** 鎖定單價放在「單價看板」最後一欄，讓你在看到估計值的當下就能直接釘住它。 */
-function readLocks() {
+/** 參考單價放在「單價看板」最後一欄，讓你在看到估計值的當下就能直接填。 */
+function readPriors() {
   var sh = sheet(SHEETS.board);
   var lastRow = sh.getLastRow();
   if (lastRow < 2) return {};
   var idx = headerIndex(sh);
-  if (idx['物品'] === undefined || idx['鎖定單價'] === undefined) return {};
+  if (idx['物品'] === undefined || idx['參考單價'] === undefined) return {};
   var values = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
   var byLabel = labelToId();
-  var locks = {};
+  var priors = {};
   for (var r = 0; r < values.length; r++) {
     var id = byLabel[String(values[r][idx['物品']]).trim()];
     if (!id) continue;
-    var raw = values[r][idx['鎖定單價']];
+    var raw = values[r][idx['參考單價']];
     if (raw === '' || raw === null || raw === undefined) continue;
     var v = Number(raw);
-    if (isFinite(v) && v >= 0) locks[id] = v;
+    if (isFinite(v) && v > 0) priors[id] = v;
   }
-  return locks;
+  return priors;
 }
 
-function saveLocks(locks) {
+function savePriors(priors) {
   var sh = sheet(SHEETS.board);
   var idx = headerIndex(sh);
   var lastRow = sh.getLastRow();
-  if (idx['鎖定單價'] === undefined || idx['物品'] === undefined || lastRow < 2) return;
+  if (idx['參考單價'] === undefined || idx['物品'] === undefined || lastRow < 2) return;
   var byLabel = labelToId();
   var labels = sh.getRange(2, idx['物品'] + 1, lastRow - 1, 1).getValues();
   var column = [];
   for (var r = 0; r < labels.length; r++) {
     var id = byLabel[String(labels[r][0]).trim()];
-    var v = (id && Object.prototype.hasOwnProperty.call(locks, id)) ? locks[id] : '';
+    var v = (id && Object.prototype.hasOwnProperty.call(priors, id)) ? priors[id] : '';
     column.push([v]);
   }
-  sh.getRange(2, idx['鎖定單價'] + 1, column.length, 1).setValues(column);
+  sh.getRange(2, idx['參考單價'] + 1, column.length, 1).setValues(column);
 }
 
-/** 寫回單價看板。鎖定單價那一欄是使用者的輸入，覆寫時要原樣保留。 */
+/** 寫回單價看板。參考單價那一欄是使用者的輸入，覆寫時要原樣保留。 */
 function writeBoard(items) {
   var sh = sheet(SHEETS.board);
   ensureHeaders(sh, BOARD_HEADERS);
-  var locks = readLocks();
+  var priors = readPriors();
   var lastRow = sh.getLastRow();
   if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).clearContent();
 
   var idx = headerIndex(sh);
   var width = sh.getLastColumn();
-  var confidenceText = { high: '高', mid: '中', low: '低', none: '無資料', locked: '已鎖定' };
+  var confidenceText = { high: '高', mid: '中', low: '低', none: '無資料' };
   var rows = [];
 
   for (var i = 0; i < items.length; i++) {
@@ -390,7 +390,7 @@ function writeBoard(items) {
     var row = new Array(width);
     for (var c = 0; c < width; c++) row[c] = '';
     // 銀幣一枚 0.0000022 元這種數字在試算表裡一樣難讀，所以連同計價單位一起寫，
-    // 「鎖定單價」那一欄使用者填的也是同一個單位。
+    // 「參考單價」那一欄使用者填的也是同一個單位。
     var per = WR_CATALOG.perOf(it.id);
     put(row, idx, '物品', it.label);
     put(row, idx, '計價單位', per === 1 ? '每 1 個' : '每 ' + WR_CATALOG.perLabel(it.id));
@@ -401,7 +401,7 @@ function writeBoard(items) {
     put(row, idx, '出現包數', it.occurrences);
     put(row, idx, '總數量', it.totalQty);
     put(row, idx, '價值占比', it.share);
-    put(row, idx, '鎖定單價', Object.prototype.hasOwnProperty.call(locks, it.id) ? locks[it.id] : '');
+    put(row, idx, '參考單價', Object.prototype.hasOwnProperty.call(priors, it.id) ? priors[it.id] : '');
     rows.push(row);
   }
   if (rows.length) {

@@ -70,36 +70,35 @@ test('沒有定義 per 的物品視為每 1 單位', () => {
   assert.strictEqual(WR_CATALOG.toDisplayPrice('不存在的物品', 3.5), 3.5);
 });
 
-test('以計價單位鎖定的值，換回原始單價後引擎得到正確結果', () => {
-  // 使用者在看板上看到「金幣 每 1K」，所以他輸入的 5.58 意思是每 1000 顆 5.58 元。
+test('以計價單位填的參考值，換回原始單價後引擎才吃得下', () => {
+  // 使用者在看板上看到「金幣 每 1K」，所以他填的 5.58 意思是每 1000 顆 5.58 元。
   const truth = { au: 0.00558, pt: 0.0011 };
   const bundles = makeBundles(truth, [
     { au: 20000, pt: 40000 }, { au: 5000 }, { pt: 100000 },
     { au: 10000, pt: 20000 }, { au: 2000, pt: 60000 }
   ]);
 
-  const displayLock = 5.58;
-  const unitLock = WR_CATALOG.toUnitPrice('au', displayLock);
-  assert.ok(Math.abs(unitLock - 0.00558) < 1e-12, `換算後應為 0.00558，得到 ${unitLock}`);
+  const displayPrior = 5.58;
+  const unitPrior = WR_CATALOG.toUnitPrice('au', displayPrior);
+  assert.ok(Math.abs(unitPrior - 0.00558) < 1e-12, `換算後應為 0.00558，得到 ${unitPrior}`);
 
-  const model = WR_SOLVER.solve(bundles, { bootstrap: false, locks: { au: unitLock } });
-  assert.ok(Math.abs(model.prices.au - 0.00558) < 1e-12, '鎖定值應原封不動進入模型');
-  // 鎖定值等於真值時，白金也該解回真值。
-  assert.ok(Math.abs(model.prices.pt - truth.pt) / truth.pt < 0.02,
+  const model = WR_SOLVER.solve(bundles, { bootstrap: false, priors: { au: unitPrior } });
+  // 參考值等於真值，所以結果應該就在真值上
+  assert.ok(Math.abs(model.prices.au - truth.au) / truth.au < 0.05,
+    `金幣應解回 ${truth.au}，實際 ${model.prices.au}`);
+  assert.ok(Math.abs(model.prices.pt - truth.pt) / truth.pt < 0.05,
     `白金應解回 ${truth.pt}，實際 ${model.prices.pt}`);
-
-  // 而且看板上看到的又會變回 5.58。
-  assert.ok(Math.abs(WR_CATALOG.toDisplayPrice('au', model.prices.au) - displayLock) < 1e-9);
 });
 
-test('若誤把計價單位的值直接當原始單價餵給引擎，結果會明顯錯掉', () => {
-  // 這個測試是在釘住「換算不能省略」這件事：少換算一次，金幣會貴一千倍。
-  const bundles = makeBundles({ au: 0.00558, pt: 0.0011 }, [
+test('忘記換算計價單位的話，參考值會差上千倍而把結果拉歪', () => {
+  // 這個測試在釘住「換算不能省略」：5.58 是每 1K 的價，直接餵進去就是每 1 顆 5.58 元。
+  const truth = { au: 0.00558, pt: 0.0011 };
+  const bundles = makeBundles(truth, [
     { au: 20000, pt: 40000 }, { au: 5000 }, { pt: 100000 }, { au: 10000, pt: 20000 }
   ]);
-  const wrong = WR_SOLVER.solve(bundles, { bootstrap: false, locks: { au: 5.58 } });
-  assert.ok(wrong.warnings.some((w) => w.code === 'lock-exceeds-price'),
-    '忘記換算應該會觸發「鎖定單價超過售價」的警告');
+  const wrong = WR_SOLVER.solve(bundles, { bootstrap: false, priors: { au: 5.58 } });
+  assert.ok(wrong.prices.au > truth.au * 10,
+    `沒換算的話金幣應該被拉得離譜，實際 ${wrong.prices.au}`);
 });
 
 /* ---------- 輸入單位（跟計價單位是兩回事） ---------- */

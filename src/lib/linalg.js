@@ -89,10 +89,17 @@ var WR_LINALG = (function () {
 
   /**
    * 在指定的欄位子集合上做最小平方 + ridge：
-   *   min ||A_S z - b||^2 + ridge * ||z||^2
+   *   min ||A_S z - b||^2 + ridge * ||z - p||^2
+   *
+   * p 是「錨點」。傳 null 等同 p = 0，也就是課本上的 ridge：把答案往 0 拉。
+   * 傳入參考值時就是往那組值拉 —— 兩者只差正規方程式右側多一項 ridge * p。
+   *
+   * ridge 可以是單一數字，也可以是每欄一個值的陣列 —— 有參考值的欄位需要
+   * 明顯的份量，沒有參考值的欄位只需要一點點以免矩陣退化，兩者差好幾個數量級。
+   *
    * 回傳長度 n 的向量，子集合以外的位置為 0。
    */
-  function lstsqSubset(A, b, cols, ridge) {
+  function lstsqSubset(A, b, cols, ridge, prior) {
     var m = A.length;
     var n = A[0].length;
     var k = cols.length;
@@ -118,7 +125,9 @@ var WR_LINALG = (function () {
       }
     }
     for (i = 0; i < k; i++) {
-      G[i][i] += ridge;
+      var lam = typeof ridge === 'number' ? ridge : ridge[cols[i]];
+      G[i][i] += lam;
+      if (prior) h[i] += lam * prior[cols[i]];
       for (j = i + 1; j < k; j++) G[j][i] = G[i][j];
     }
 
@@ -130,12 +139,16 @@ var WR_LINALG = (function () {
 
   /**
    * 非負最小平方（Lawson–Hanson 主動集法），帶 ridge 正則化：
-   *   min ||A x - b||^2 + ridge * ||x||^2   s.t.  x >= 0
+   *   min ||A x - b||^2 + ridge * ||x - p||^2   s.t.  x >= 0
+   *
+   * p（prior）是正則化的錨點，傳 null 就是往 0 拉的標準 ridge。
+   * 加了錨點之後目標函數仍是凸二次式，KKT 條件的形式不變，
+   * 所以主動集法的流程完全照舊，只有梯度與內層最小平方各多一項。
    *
    * ridge 直接加在正規方程式的對角線上，所以不需要把 A 擴增成 (m+n) x n，
    * 每次內層求解都省下 n 列的運算。
    */
-  function nnls(A, b, ridge, maxIter) {
+  function nnls(A, b, ridge, prior, maxIter) {
     var m = A.length;
     if (m === 0) return [];
     var n = A[0].length;
@@ -144,6 +157,9 @@ var WR_LINALG = (function () {
 
     ridge = ridge || 0;
     maxIter = maxIter || Math.max(30, 3 * n);
+    var ridgeAt = typeof ridge === 'number'
+      ? function () { return ridge; }
+      : function (c) { return ridge[c]; };
 
     var passive = new Array(n);
     for (var i = 0; i < n; i++) passive[i] = false;
@@ -163,8 +179,9 @@ var WR_LINALG = (function () {
           if (row[c] !== 0) grad[c] += row[c] * e;
         }
       }
-      if (ridge !== 0) {
-        for (c = 0; c < n; c++) grad[c] -= ridge * x[c];
+      for (c = 0; c < n; c++) {
+        var lam = ridgeAt(c);
+        if (lam) grad[c] -= lam * (x[c] - (prior ? prior[c] : 0));
       }
     }
 
@@ -191,7 +208,7 @@ var WR_LINALG = (function () {
       while (inner++ < innerCap) {
         var cols = activeCols();
         if (cols.length === 0) break;
-        var s = lstsqSubset(A, b, cols, ridge);
+        var s = lstsqSubset(A, b, cols, ridge, prior);
 
         var allPositive = true;
         for (i = 0; i < cols.length; i++) {

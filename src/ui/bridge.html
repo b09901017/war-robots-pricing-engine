@@ -105,7 +105,7 @@ var WRBridge = (function () {
         var raw = localStorage.getItem(DATA_KEY);
         if (raw) return JSON.parse(raw);
       } catch (e) { /* 忽略 */ }
-      return { bundles: [], settings: { ridge: 0.005, relativeWeighting: true, samples: 240, interval: 0.8 }, locks: {} };
+      return { bundles: [], settings: { priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8 }, priors: {} };
     },
 
     write: function (store) {
@@ -124,7 +124,7 @@ var WRBridge = (function () {
           return { sheet: '本機', url: '' };
 
         case 'load':
-          return { bundles: s.bundles, settings: s.settings, locks: s.locks, spreadsheetUrl: '', spreadsheetName: '' };
+          return { bundles: s.bundles, settings: s.settings, priors: s.priors, spreadsheetUrl: '', spreadsheetName: '' };
 
         case 'saveBundle':
           var id = payload.id || 'b' + Date.now().toString(36);
@@ -157,8 +157,8 @@ var WRBridge = (function () {
           LocalStore.write(s);
           return { bundles: s.bundles };
 
-        case 'saveLocks':
-          s.locks = payload || {};
+        case 'savePriors':
+          s.priors = payload || {};
           LocalStore.write(s);
           return {};
 

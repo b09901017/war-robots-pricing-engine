@@ -60,7 +60,7 @@
   var SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
   var OTHER_COLOR = 'var(--s6)';
 
-  var CONF_TEXT = { high: '高信心', mid: '中信心', low: '低信心', none: '無資料', locked: '已鎖定' };
+  var CONF_TEXT = { high: '高信心', mid: '中信心', low: '低信心', none: '無資料' };
 
   var fmtQty = WR_CATALOG.formatQty;
   var fmtPrice = WR_CATALOG.formatUnitPrice;
@@ -83,8 +83,8 @@
     ready: false,
     view: 'board',
     bundles: [],
-    settings: { ridge: 0.005, relativeWeighting: true, samples: 240, interval: 0.8 },
-    locks: {},
+    settings: { priorWeight: 1, relativeWeighting: true, samples: 240, interval: 0.8 },
+    priors: {},
     model: null,
     spreadsheetUrl: '',
     spreadsheetName: '',
@@ -105,17 +105,17 @@
      ==================================================================== */
 
   function recompute() {
-    // state.locks 存的是使用者看到、也是試算表裡的「計價單位」數字，
+    // state.priors 存的是使用者看到、也是試算表裡的「計價單位」數字，
     // 引擎要的是每 1 單位的原始單價，換算只在這一個地方發生。
-    var locks = {};
-    for (var id in state.locks) {
-      if (Object.prototype.hasOwnProperty.call(state.locks, id)) {
-        locks[id] = WR_CATALOG.toUnitPrice(id, state.locks[id]);
+    var priors = {};
+    for (var id in state.priors) {
+      if (Object.prototype.hasOwnProperty.call(state.priors, id)) {
+        priors[id] = WR_CATALOG.toUnitPrice(id, state.priors[id]);
       }
     }
     state.model = WR_SOLVER.solve(state.bundles, {
-      locks: locks,
-      ridge: state.settings.ridge,
+      priors: priors,
+      priorWeight: state.settings.priorWeight,
       relativeWeighting: state.settings.relativeWeighting,
       samples: state.settings.samples,
       interval: state.settings.interval
@@ -258,9 +258,10 @@
     row.appendChild(h('div', { class: 'price-row-head' },
       h('span', { class: 'price-row-name', text: it.label }),
       h('span', { class: 'pill conf-' + it.confidence },
-        h('span', { class: 'dot' }),
-        it.confidence === 'locked' ? h('span', { svg: ICON.lock }) : null,
-        CONF_TEXT[it.confidence])
+        h('span', { class: 'dot' }), CONF_TEXT[it.confidence]),
+      it.priorPull !== null && it.priorPull > 0.1
+        ? h('span', { class: 'pill conf-low' }, '參考值影響 ' + pct(it.priorPull))
+        : null
     ));
 
     row.appendChild(h('div', { class: 'price-row-value num' },
@@ -279,6 +280,10 @@
       row.appendChild(note('解為 0 —— 這個物品總是跟別的東西綁在一起出現，資料還分不出它自己的價值。'));
     } else if (it.occurrences < 2) {
       row.appendChild(note('只出現在 1 包裡，這個數字完全取決於那一包怎麼定價，還不能當成行情。'));
+    } else if (it.priorPull !== null && it.priorPull > 0.1) {
+      row.appendChild(note('不看參考值的話會是 ' + dPrice(it.id, it.dataOnlyPrice) +
+        '。差距大代表目前的資料還分不出這個物品的價值。'));
+      if (hasBand) row.appendChild(rangeBar(it));
     } else if (hasBand) {
       row.appendChild(rangeBar(it));
     }
@@ -966,28 +971,38 @@
       items.slice().sort(function (a, b) {
         return WR_CATALOG.IDS.indexOf(a.id) - WR_CATALOG.IDS.indexOf(b.id);
       }).forEach(function (it) {
-        var locked = Object.prototype.hasOwnProperty.call(state.locks, it.id);
+        var given = Object.prototype.hasOwnProperty.call(state.priors, it.id);
+        var pullText = '';
+        if (it.priorPull !== null) {
+          pullText = it.priorPull > 0.1
+            ? ' · 目前把結果拉動了 ' + pct(it.priorPull)
+            : ' · 幾乎沒影響，資料已經夠了';
+        }
         lockList.appendChild(h('div', { class: 'lock-row' },
           h('div', { class: 'lock-info' },
             h('div', { class: 'lock-name', text: it.label }),
-            h('div', { class: 'lock-est', text: (locked ? '解出值會被覆寫' : '目前解出 ' + dPrice(it.id, it.price) + ' 元') +
-              ' · ' + dUnit(it.id) +
-              ' · 出現 ' + it.occurrences + ' 包' })),
+            h('div', { class: 'lock-est', text: '解出 ' + dPrice(it.id, it.price) + ' ' + dUnit(it.id) +
+              ' · 出現 ' + it.occurrences + ' 包' + pullText })),
           h('input', {
             class: 'lock-input', type: 'number', step: 'any', min: '0',
-            'data-locked': locked ? 'true' : 'false',
-            'aria-label': it.label + ' 鎖定單價',
-            placeholder: '未鎖定',
-            value: locked ? state.locks[it.id] : '',
-            onchange: function (e) { setLock(it.id, e.target.value); },
+            'data-locked': given ? 'true' : 'false',
+            'aria-label': it.label + ' 參考單價',
+            placeholder: '未填',
+            value: given ? state.priors[it.id] : '',
+            onchange: function (e) { setPrior(it.id, e.target.value); },
             oninput: function (e) { e.target.setAttribute('data-locked', e.target.value === '' ? 'false' : 'true'); }
           })));
       });
     }
 
     root.appendChild(h('section', { class: 'section' },
-      h('div', { class: 'section-title', text: '鎖定基準單價' }),
-      h('div', { class: 'section-note', text: '對某個物品填入你有把握的單價，它就會被當成已知值，從售價裡先扣掉，其餘物品再去解剩下的部分。這是讓稀有物品的估計收斂最有效的手段。留空代表交給引擎自己解。' }),
+      h('div', { class: 'section-title', text: '參考單價' }),
+      h('div', { class: 'section-note', text:
+        '有些物品在每一包裡都綁在一起賣，數學上分不出誰值多少。填個大概的數字，' +
+        '引擎在這種分不出來的情況下就會往你的猜測靠。' }),
+      h('div', { class: 'section-note', style: 'color:var(--accent-ink)', text:
+        '這不是鎖定 —— 它只相當於「一筆禮包」的份量，禮包記得越多，你的猜測就越沒有影響力，' +
+        '最後完全由資料決定。填錯了也會被資料自己修正。' }),
       lockList));
 
     // 推算參數
@@ -996,16 +1011,17 @@
       h('div', { class: 'section-title', text: '推算參數' }),
       h('div', { class: 'section-note', text: '這四個平常不用動，預設值就是合理的。看板上的數字怪怪的時候再回來調。' }),
       h('div', { class: 'card' },
-        settingRow('保守程度',
-          '有些物品總是綁在一起賣，數學上分不出誰值多少。這個值決定遇到這種情況時要多保守：' +
-          '調高比較安全但會低估稀有物品，調到 0 代表完全相信資料。',
-          h('input', { type: 'range', min: '0', max: '0.1', step: '0.001', value: s.ridge,
+        settingRow('參考單價的份量',
+          '你填的參考單價相當於「幾筆禮包」的份量。1 代表某物品出現在 1 包裡時，' +
+          '答案大約一半來自你的猜測；出現在 10 包裡時就只剩 9%。調高會讓猜測更有份量，' +
+          '但資料夠多時反而會把答案拉偏。沒填參考單價的話這個值不影響任何事。',
+          h('input', { type: 'range', min: '0', max: '8', step: '0.5', value: s.priorWeight,
             oninput: function (e) {
-              s.ridge = Number(e.target.value);
-              e.target.parentNode.querySelector('.setting-value').textContent = s.ridge.toFixed(3);
+              s.priorWeight = Number(e.target.value);
+              e.target.parentNode.querySelector('.setting-value').textContent = s.priorWeight.toFixed(1);
               recomputeSoon(); persistSettings();
             } }),
-          h('span', { class: 'setting-value', text: Number(s.ridge).toFixed(3) })),
+          h('span', { class: 'setting-value', text: Number(s.priorWeight).toFixed(1) })),
         settingRow('大小包一樣重要',
           '開著的話，30 元的小包和 3290 元的大包有一樣的發言權。關掉的話大包會主導整個結果，' +
           '你記的那些小包等於白記。建議保持開啟。',
@@ -1282,16 +1298,16 @@
       h('div', { class: 'setting-control' }, control, extra));
   }
 
-  function setLock(id, raw) {
-    if (raw === '' || raw === null) delete state.locks[id];
+  function setPrior(id, raw) {
+    if (raw === '' || raw === null) delete state.priors[id];
     else {
       var v = Number(raw);
-      if (!isFinite(v) || v < 0) { toast('鎖定單價必須是 0 或正數'); return; }
-      state.locks[id] = v;
+      if (!isFinite(v) || v <= 0) { toast('參考單價必須是正數，留空代表不給'); return; }
+      state.priors[id] = v;
     }
     recompute();
-    renderTopbar();
-    WRBridge.call('saveLocks', state.locks).catch(failed);
+    render();
+    WRBridge.call('savePriors', state.priors).catch(failed);
   }
 
   var settingsTimer = null;
@@ -1448,7 +1464,7 @@
     return WRBridge.call('load').then(function (data) {
       state.bundles = data.bundles || [];
       state.settings = data.settings || state.settings;
-      state.locks = data.locks || {};
+      state.priors = data.priors || {};
       state.spreadsheetUrl = data.spreadsheetUrl || '';
       state.spreadsheetName = data.spreadsheetName || '';
       state.ready = true;

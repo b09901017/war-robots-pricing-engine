@@ -92,20 +92,19 @@ test('單價永遠不為負，即使禮包定價明顯不一致', () => {
   }
 });
 
-test('鎖定單價會被當成已知值，並把剩餘價值分給其他物品', () => {
+test('參考值只在資料分不出來時介入，不會取代資料', () => {
   const truth = { au: 0.02, pt: 0.001 };
   const bundles = makeBundles(truth, [
-    { au: 1000, pt: 20000 },
-    { au: 5000, pt: 50000 },
-    { au: 2500 },
-    { pt: 100000 }
+    { au: 1000, pt: 20000 }, { au: 5000 }, { au: 2500 }, { pt: 100000 },
+    { au: 3000, pt: 40000 }, { pt: 50000 }, { au: 800, pt: 10000 }
   ]);
-  const model = WR_SOLVER.solve(bundles, { bootstrap: false, locks: { au: 0.05 } });
-  assert.strictEqual(model.prices.au, 0.05, '鎖定值應原封不動');
-  // 金幣被高估後，白金必須被壓低才能配平售價。
-  assert.ok(model.prices.pt < truth.pt, `白金應被壓低，實際 ${model.prices.pt}`);
-  const locked = model.items.find((it) => it.id === 'au');
-  assert.strictEqual(locked.confidence, 'locked');
+  // 給一個錯一倍的參考值：資料足夠，所以結果應該還是靠近真值而不是參考值
+  const model = WR_SOLVER.solve(bundles, { bootstrap: false, priors: { au: 0.04 } });
+  assert.ok(Math.abs(model.prices.au - truth.au) < Math.abs(model.prices.au - 0.04),
+    `解出 ${model.prices.au}，應該比較靠近真值 ${truth.au} 而不是參考值 0.04`);
+  const au = model.items.find((it) => it.id === 'au');
+  assert.strictEqual(au.prior, 0.04);
+  assert.ok(au.priorPull !== null, '要回報參考值的影響程度');
 });
 
 test('bootstrap 區間會包住點估計，且稀有物品的區間明顯較寬', () => {
