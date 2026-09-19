@@ -23,31 +23,35 @@ var WR_CATALOG = (function () {
   /**
    * steps = 數字鍵盤上方的「常用值」快捷鍵，依照商城常見的發放量挑選。
    * 只是輸入捷徑，任何數字都可以用鍵盤自己打。
+   *
+   * per = 計價單位。銀幣一枚值 0.0000022 元，這種數字人腦讀不動，
+   * 所以看板改成「每 1M 2.2 元」。挑選原則是讓常見的單價落在 1～1000 元之間。
+   * per 純粹是顯示用的，推算引擎一律用「每 1 單位」的原始值。
    */
   var ITEMS = [
-    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', steps: [100000, 250000, 500000, 1000000, 2500000] },
-    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
-    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', steps: [10000, 25000, 50000, 100000, 250000] },
-    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', steps: [5000, 10000, 25000, 50000, 100000] },
+    { id: 'ag', name: '銀幣', abbr: 'Ag', group: 'currency', per: 1000000, steps: [100000, 250000, 500000, 1000000, 2500000] },
+    { id: 'au', name: '金幣', abbr: 'Au', group: 'currency', per: 1000, steps: [250, 500, 1000, 2500, 5000, 10000, 20000] },
+    { id: 'pt', name: '白金', abbr: 'Pt', group: 'currency', per: 10000, steps: [10000, 25000, 50000, 100000, 250000] },
+    { id: 'key', name: '鑰匙', abbr: '鑰', group: 'currency', per: 10000, steps: [5000, 10000, 25000, 50000, 100000] },
 
-    { id: 'cell', name: '電池', abbr: '電', group: 'material', steps: [50, 100, 250, 500, 1000] },
-    { id: 'module', name: '模塊', abbr: '模', group: 'material', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', steps: [1000, 3200, 6400, 12800, 25600] },
-    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', steps: [500, 1000, 2500, 5000, 10000] },
-    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', steps: [100, 250, 500, 1000, 2500] },
+    { id: 'cell', name: '電池', abbr: '電', group: 'material', per: 1000, steps: [50, 100, 250, 500, 1000] },
+    { id: 'module', name: '模塊', abbr: '模', group: 'material', per: 100, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'chip', name: '微晶片', abbr: '微', group: 'material', per: 1000, steps: [1000, 3200, 6400, 12800, 25600] },
+    { id: 'pilotchip', name: '機師晶片', abbr: '機', group: 'material', per: 1000, steps: [500, 1000, 2500, 5000, 10000] },
+    { id: 'uptoken', name: '升級代幣', abbr: '代', group: 'material', per: 1, steps: [100, 250, 500, 1000, 2500] },
 
-    { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_basic_au', name: '基礎金', abbr: '基金', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_weapon_ag', name: '武器銀', abbr: '武銀', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_weapon_au', name: '武器金', abbr: '武金', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_bot_ag', name: '機器人銀', abbr: '機銀', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_bot_au', name: '機器人金', abbr: '機金', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_titan', name: '泰坦', abbr: '泰', group: 'datacard', steps: [1, 2, 3, 5, 10, 20] },
-    { id: 'dc_newbot_ag', name: '新款機器人銀', abbr: '新銀', group: 'datacard', steps: [1, 2, 3, 5, 10] },
-    { id: 'dc_newbot_au', name: '新款機器人金', abbr: '新金', group: 'datacard', steps: [1, 2, 3, 5, 10] },
-    { id: 'dc_ultimate', name: '終極', abbr: '終', group: 'datacard', steps: [1, 2, 3, 5, 10] },
+    { id: 'dc_basic_ag', name: '基礎銀', abbr: '基銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_basic_au', name: '基礎金', abbr: '基金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_weapon_ag', name: '武器銀', abbr: '武銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_weapon_au', name: '武器金', abbr: '武金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_bot_ag', name: '機器人銀', abbr: '機銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_bot_au', name: '機器人金', abbr: '機金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_titan', name: '泰坦', abbr: '泰', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10, 20] },
+    { id: 'dc_newbot_ag', name: '新款機器人銀', abbr: '新銀', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
+    { id: 'dc_newbot_au', name: '新款機器人金', abbr: '新金', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
+    { id: 'dc_ultimate', name: '終極', abbr: '終', group: 'datacard', per: 1, steps: [1, 2, 3, 5, 10] },
 
-    { id: 'misc', name: '其他物品', abbr: '其', group: 'other', steps: [1, 2, 3, 5, 10] }
+    { id: 'misc', name: '其他物品', abbr: '其', group: 'other', per: 1, steps: [1, 2, 3, 5, 10] }
   ];
 
   var PRICE_STEPS = [30, 90, 170, 330, 490, 790, 990, 1590, 1990, 2990, 3290];
@@ -71,6 +75,50 @@ var WR_CATALOG = (function () {
     var it = BY_ID[id];
     if (!it) return id;
     return it.group === 'datacard' ? '資料卡·' + it.name : it.name;
+  }
+
+  /* ---------- 計價單位 -------------------------------------------------
+     推算引擎內部一律用「每 1 單位」的原始單價；下面這組函式只負責在畫面上
+     把它換算成人讀得懂的計價單位。兩邊絕對不能混用，所以換算集中在這裡。
+     -------------------------------------------------------------------- */
+
+  function perOf(id) {
+    var it = BY_ID[id];
+    return it && it.per > 0 ? it.per : 1;
+  }
+
+  /** 計價單位的短標籤：1000000 → '1M'、1000 → '1K'、100 → '100'、1 → ''。 */
+  function perLabel(id) {
+    var per = perOf(id);
+    if (per === 1) return '';
+    if (per >= 1000000) return trimZeros(per / 1000000) + 'M';
+    if (per >= 1000) return trimZeros(per / 1000) + 'K';
+    return String(per);
+  }
+
+  /** 看板上單價後面那段文字，例如「元 / 1M」「元 / 張」。 */
+  function priceUnitLabel(id) {
+    var label = perLabel(id);
+    if (label) return '元 / ' + label;
+    var it = BY_ID[id];
+    return '元 / ' + (it && it.group === 'datacard' ? '張' : '個');
+  }
+
+  /** 每 1 單位的原始單價 → 顯示用的計價單位單價。 */
+  function toDisplayPrice(id, unitPrice) {
+    if (unitPrice === null || unitPrice === undefined || !isFinite(unitPrice)) return null;
+    return unitPrice * perOf(id);
+  }
+
+  /** 顯示用的計價單位單價 → 每 1 單位的原始單價。 */
+  function toUnitPrice(id, displayPrice) {
+    if (displayPrice === null || displayPrice === undefined || !isFinite(displayPrice)) return null;
+    return displayPrice / perOf(id);
+  }
+
+  /** 直接把原始單價格式化成顯示字串（已換算過計價單位）。 */
+  function formatDisplayPrice(id, unitPrice) {
+    return formatUnitPrice(toDisplayPrice(id, unitPrice));
   }
 
   function groups() {
@@ -139,6 +187,12 @@ var WR_CATALOG = (function () {
     nameOf: nameOf,
     labelOf: labelOf,
     groups: groups,
+    perOf: perOf,
+    perLabel: perLabel,
+    priceUnitLabel: priceUnitLabel,
+    toDisplayPrice: toDisplayPrice,
+    toUnitPrice: toUnitPrice,
+    formatDisplayPrice: formatDisplayPrice,
     formatQty: formatQty,
     formatUnitPrice: formatUnitPrice,
     formatMoney: formatMoney,
@@ -237,7 +291,7 @@ function tokenOk(token) {
 
 var SHEETS = { bundles: '禮包', board: '單價看板', settings: '設定', evaluations: '試算紀錄' };
 var BUNDLE_FIXED = ['ID', '名稱', '售價(TWD)', '日期', '啟用'];
-var BOARD_HEADERS = ['物品', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '鎖定單價'];
+var BOARD_HEADERS = ['物品', '計價單位', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '鎖定單價'];
 var EVAL_HEADERS = ['時間', '名稱', '售價(TWD)', '理論價值', '性價比指數', '評價', '內容'];
 
 function spreadsheet() {
@@ -538,10 +592,14 @@ function writeBoard(items) {
     var it = items[i];
     var row = new Array(width);
     for (var c = 0; c < width; c++) row[c] = '';
+    // 銀幣一枚 0.0000022 元這種數字在試算表裡一樣難讀，所以連同計價單位一起寫，
+    // 「鎖定單價」那一欄使用者填的也是同一個單位。
+    var per = WR_CATALOG.perOf(it.id);
     put(row, idx, '物品', it.label);
-    put(row, idx, '基準單價', it.price);
-    put(row, idx, '區間下界', it.low === null || it.low === undefined ? '' : it.low);
-    put(row, idx, '區間上界', it.high === null || it.high === undefined ? '' : it.high);
+    put(row, idx, '計價單位', per === 1 ? '每 1 個' : '每 ' + WR_CATALOG.perLabel(it.id));
+    put(row, idx, '基準單價', it.price * per);
+    put(row, idx, '區間下界', it.low === null || it.low === undefined ? '' : it.low * per);
+    put(row, idx, '區間上界', it.high === null || it.high === undefined ? '' : it.high * per);
     put(row, idx, '信心度', confidenceText[it.confidence] || it.confidence);
     put(row, idx, '出現包數', it.occurrences);
     put(row, idx, '總數量', it.totalQty);

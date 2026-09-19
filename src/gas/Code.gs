@@ -88,7 +88,7 @@ function tokenOk(token) {
 
 var SHEETS = { bundles: '禮包', board: '單價看板', settings: '設定', evaluations: '試算紀錄' };
 var BUNDLE_FIXED = ['ID', '名稱', '售價(TWD)', '日期', '啟用'];
-var BOARD_HEADERS = ['物品', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '鎖定單價'];
+var BOARD_HEADERS = ['物品', '計價單位', '基準單價', '區間下界', '區間上界', '信心度', '出現包數', '總數量', '價值占比', '鎖定單價'];
 var EVAL_HEADERS = ['時間', '名稱', '售價(TWD)', '理論價值', '性價比指數', '評價', '內容'];
 
 function spreadsheet() {
@@ -389,10 +389,14 @@ function writeBoard(items) {
     var it = items[i];
     var row = new Array(width);
     for (var c = 0; c < width; c++) row[c] = '';
+    // 銀幣一枚 0.0000022 元這種數字在試算表裡一樣難讀，所以連同計價單位一起寫，
+    // 「鎖定單價」那一欄使用者填的也是同一個單位。
+    var per = WR_CATALOG.perOf(it.id);
     put(row, idx, '物品', it.label);
-    put(row, idx, '基準單價', it.price);
-    put(row, idx, '區間下界', it.low === null || it.low === undefined ? '' : it.low);
-    put(row, idx, '區間上界', it.high === null || it.high === undefined ? '' : it.high);
+    put(row, idx, '計價單位', per === 1 ? '每 1 個' : '每 ' + WR_CATALOG.perLabel(it.id));
+    put(row, idx, '基準單價', it.price * per);
+    put(row, idx, '區間下界', it.low === null || it.low === undefined ? '' : it.low * per);
+    put(row, idx, '區間上界', it.high === null || it.high === undefined ? '' : it.high * per);
     put(row, idx, '信心度', confidenceText[it.confidence] || it.confidence);
     put(row, idx, '出現包數', it.occurrences);
     put(row, idx, '總數量', it.totalQty);

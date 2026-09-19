@@ -63,6 +63,9 @@
 
   var fmtQty = WR_CATALOG.formatQty;
   var fmtPrice = WR_CATALOG.formatUnitPrice;
+  /** 看板與試算一律顯示「計價單位單價」；引擎內部仍是每 1 單位的原始值。 */
+  var dPrice = WR_CATALOG.formatDisplayPrice;
+  var dUnit = WR_CATALOG.priceUnitLabel;
   var fmtMoney = WR_CATALOG.formatMoney;
   var group = WR_CATALOG.groupDigits;
 
@@ -101,8 +104,16 @@
      ==================================================================== */
 
   function recompute() {
+    // state.locks 存的是使用者看到、也是試算表裡的「計價單位」數字，
+    // 引擎要的是每 1 單位的原始單價，換算只在這一個地方發生。
+    var locks = {};
+    for (var id in state.locks) {
+      if (Object.prototype.hasOwnProperty.call(state.locks, id)) {
+        locks[id] = WR_CATALOG.toUnitPrice(id, state.locks[id]);
+      }
+    }
     state.model = WR_SOLVER.solve(state.bundles, {
-      locks: state.locks,
+      locks: locks,
       ridge: state.settings.ridge,
       relativeWeighting: state.settings.relativeWeighting,
       samples: state.settings.samples,
@@ -226,7 +237,7 @@
     });
 
     root.appendChild(h('section', { class: 'section' }, head,
-      h('div', { class: 'section-note', text: '每個數字是「1 單位這個物品值多少台幣」。淺色橫條是 80% 可能區間，直線是點估計。' }),
+      h('div', { class: 'section-note', text: '每個數字是「這個計價單位值多少台幣」，例如鑰匙是每 10K、金幣是每 1K。淺色橫條是 80% 可能區間，直線是點估計。' }),
       board));
 
     root.appendChild(fitSection(m));
@@ -252,14 +263,14 @@
     ));
 
     row.appendChild(h('div', { class: 'price-row-value num' },
-      fmtPrice(it.price), h('span', { class: 'unit', text: '元/單位' })));
+      dPrice(it.id, it.price), h('span', { class: 'unit', text: dUnit(it.id) })));
 
     var hasBand = it.price > 0 && it.low !== null && it.high !== null && it.occurrences >= 2;
 
     row.appendChild(h('div', { class: 'price-row-meta' },
       h('span', { text: '出現 ' + it.occurrences + ' 包' }),
       h('span', { text: '共 ' + fmtQty(it.totalQty) }),
-      hasBand ? h('span', { text: '區間 ' + fmtPrice(it.low) + ' – ' + fmtPrice(it.high) }) : null,
+      hasBand ? h('span', { text: '區間 ' + dPrice(it.id, it.low) + ' – ' + dPrice(it.id, it.high) }) : null,
       h('span', { text: '占總價值 ' + pct(it.share, 1) }),
       h('span', { class: 'share-bar', 'aria-hidden': 'true' },
         h('i', { style: 'width:' + Math.max(2, Math.round(it.share * 100)) + '%' }))
@@ -293,12 +304,13 @@
     var overflow = it.high > max;
 
     var bar = h('div', { class: 'range', role: 'img',
-      'aria-label': it.label + ' 單價 ' + fmtPrice(it.price) + ' 元，可能區間 ' + fmtPrice(it.low) + ' 到 ' + fmtPrice(it.high) + ' 元' },
+      'aria-label': it.label + ' 每 ' + (WR_CATALOG.perLabel(it.id) || '1') + ' 單位 ' + dPrice(it.id, it.price) +
+        ' 元，可能區間 ' + dPrice(it.id, it.low) + ' 到 ' + dPrice(it.id, it.high) + ' 元' },
       h('div', { class: 'range-track' }),
       h('div', { class: 'range-band', style: 'left:' + (lo * 100) + '%; width:' + Math.max(1.5, (hi - lo) * 100) + '%' }),
       h('div', { class: 'range-point', style: 'left:calc(50% - 1.5px)' })
     );
-    if (overflow) bar.appendChild(h('div', { class: 'range-overflow', text: '▸ ' + fmtPrice(it.high) }));
+    if (overflow) bar.appendChild(h('div', { class: 'range-overflow', text: '▸ ' + dPrice(it.id, it.high) }));
     return bar;
   }
 
@@ -476,7 +488,8 @@
         slots.appendChild(h('div', { class: 'slot' },
           h('div', { style: 'min-width:0' },
             h('div', { class: 'slot-name', text: WR_CATALOG.labelOf(id) }),
-            est ? h('div', { class: 'slot-sub', text: '基準 ' + fmtPrice(est) + ' 元 · 小計 ' + fmtMoney(draft.qty[id] * est) + ' 元' }) : null),
+            est ? h('div', { class: 'slot-sub', text: '基準 ' + dUnit(id).replace('元 / ', '每 ') + ' ' +
+              dPrice(id, est) + ' 元 · 小計 ' + fmtMoney(draft.qty[id] * est) + ' 元' }) : null),
           h('button', {
             class: 'slot-qty num', 'aria-label': WR_CATALOG.labelOf(id) + ' 數量',
             onclick: function () {
@@ -732,7 +745,8 @@
       legend.appendChild(h('div', { class: 'legend-row' },
         h('span', { class: 'legend-swatch', style: 'background:' + SERIES[i] }),
         h('span', { class: 'legend-name' }, c.label,
-          h('span', { text: fmtQty(c.qty) + ' × ' + fmtPrice(c.unitPrice) + ' 元 · ' + (CONF_TEXT[c.confidence] || '') })),
+          h('span', { text: fmtQty(c.qty) + ' 個 · ' + dUnit(c.id).replace('元 / ', '每 ') + ' ' +
+            dPrice(c.id, c.unitPrice) + ' 元 · ' + (CONF_TEXT[c.confidence] || '') })),
         h('span', { class: 'legend-val', text: fmtMoney(c.value) }),
         h('span', { class: 'legend-share', text: pct(c.share) })));
     });
@@ -790,7 +804,8 @@
         lockList.appendChild(h('div', { class: 'lock-row' },
           h('div', { class: 'lock-info' },
             h('div', { class: 'lock-name', text: it.label }),
-            h('div', { class: 'lock-est', text: (locked ? '解出值會被覆寫' : '目前解出 ' + fmtPrice(it.price) + ' 元') +
+            h('div', { class: 'lock-est', text: (locked ? '解出值會被覆寫' : '目前解出 ' + dPrice(it.id, it.price) + ' 元') +
+              ' · ' + dUnit(it.id) +
               ' · 出現 ' + it.occurrences + ' 包' })),
           h('input', {
             class: 'lock-input', type: 'number', step: 'any', min: '0',

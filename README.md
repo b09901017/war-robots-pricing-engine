@@ -168,7 +168,9 @@ https://<你的帳號>.github.io/war-robots-pricing-engine/
 ### 看單價
 「看板」分頁。每一列是一種物品：
 
-- **大數字** 是基準單價（1 單位值多少台幣）
+- **大數字** 是基準單價，以該物品的「計價單位」計價 —— 銀幣一枚值 0.0000022 元這種
+  數字讀不動，所以銀幣看「每 1M」、金幣看「每 1K」、鑰匙看「每 10K」、資料卡看「每張」。
+  推算引擎內部一律用每 1 單位的原始值，換算只發生在畫面上與試算表裡
 - **淺色橫條** 是 80% 可能區間，中間的直線是點估計。橫條越寬代表越不確定
 - **信心度標籤** 綜合「出現在幾包裡」和「區間有多寬」
 - 只出現在 1 包裡、或被解成 0 的物品，會直接寫明原因，不會假裝那是行情
@@ -266,6 +268,7 @@ tools/
   build.js        → dist-web/index.html（網站）+ dist-gas/Code.gs（貼進 Apps Script）
 test/
   solver.test.js    演算法測試
+  display.test.js   計價單位換算測試
   importer.test.js  匯入解析測試
 .github/workflows/
   deploy.yml      推到 main → 跑測試 → 部署 GitHub Pages
